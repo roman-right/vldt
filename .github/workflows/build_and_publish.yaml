@@ -1,0 +1,102 @@
+name: Wheels
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build_sdist:
+    name: Build SDist
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Build SDist
+        run: pipx run build --sdist
+
+      - name: Check metadata
+        run: pipx run twine check dist/*
+
+      # Move sdist files to a dedicated folder and upload only the .tar.gz files.
+      - name: Organize SDist
+        run: |
+          mkdir -p dist/sdist
+          mv dist/*.tar.gz dist/sdist/
+
+      - name: Upload SDist
+        uses: actions/upload-artifact@v4
+        with:
+          name: cibw-sdist
+          path: dist/sdist/*.tar.gz
+
+  build_wheels:
+    name: Build Wheels on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-13, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - uses: pypa/cibuildwheel@v2.22
+        env:
+          CIBW_ARCHS_MACOS: auto universal2
+          SYSTEM_VERSION_COMPAT: 0
+          CIBW_SKIP: pp31*-macosx*
+
+      - name: Verify clean directory
+        run: git diff --exit-code
+        shell: bash
+
+      # Move wheels into an OS-specific folder and upload only the .whl files.
+      - name: Organize Wheels
+        run: |
+          mkdir -p wheels/${{ matrix.os }}
+          mv wheelhouse/*.whl wheels/${{ matrix.os }}/
+
+      - name: Upload Wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: cibw-wheels-${{ matrix.os }}
+          path: wheels/${{ matrix.os }}/*.whl
+
+  upload_all:
+    name: Upload to PyPI
+    needs: [build_sdist, build_wheels]
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      # Download all artifacts without merging directories.
+      - name: Download Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: cibw-*
+          path: artifacts
+          merge-multiple: false
+
+      # Copy distribution files into a flat "dist" directory.
+      - name: Combine Artifacts
+        run: |
+          mkdir -p dist
+          cp artifacts/cibw-sdist/*.tar.gz dist/ || true
+          for d in artifacts/cibw-wheels-*; do
+            cp "$d"/*.whl dist/ || true
+          done
+
+      - name: List dist contents
+        run: ls -la dist
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1

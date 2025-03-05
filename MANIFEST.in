@@ -1,0 +1,8 @@
+include README.md
+include LICENSE
+recursive-include src *.cpp
+recursive-include src *.hpp
+recursive-include src/conversion *.hpp
+recursive-include src/schema *.hpp
+recursive-include src/validation *.hpp
+recursive-include external/rapidjson/include *
