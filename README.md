@@ -38,7 +38,7 @@ VLDT is engineered for speed without sacrificing robust data validation. Our ben
 
 In our tests, VLDT consistently demonstrated efficiency, especially in iterative operations like appending model objects to a list. While both libraries perform well in parsing and serialization tasks, VLDT's performance advantages make it well-suited for high-load or time-sensitive applications.
 
-For those interested in reproducing these results, the complete load test script is available in our repository [here](/load_test/load_test.py).
+For those interested in reproducing these results, the complete load test script is available in the repository [here](https://github.com/roman-right/vldt/blob/main/load_test/load_test.py).
 
 ---
 
