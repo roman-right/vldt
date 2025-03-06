@@ -6,13 +6,19 @@ build-backend = "setuptools.build_meta"
 name = "vldt"
 version = "0.1.1"
 authors = [
-  { name = "Roman Right", email = "roman-right@protonmail.com" }
+    { name = "Roman Right", email = "roman-right@protonmail.com" }
 ]
 description = "High-Performance Data Validation for Python"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-  "typing_extensions>=4.0.0"
+    "typing_extensions>=4.0.0"
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
 ]
 
 [project.optional-dependencies]
@@ -26,12 +32,12 @@ test = [
 [tool.pytest.ini_options]
 minversion = "8.0"
 testpaths = [
-  "tests"
+    "tests"
 ]
 filterwarnings = [
-  "error",
-  "ignore::DeprecationWarning",
-  "ignore::UserWarning"
+    "error",
+    "ignore::DeprecationWarning",
+    "ignore::UserWarning"
 ]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"

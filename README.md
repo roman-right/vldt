@@ -1,3 +1,6 @@
+![PyPI](https://img.shields.io/pypi/v/vldt)
+![Python Versions](https://img.shields.io/pypi/pyversions/vldt)
+
 ![VLDT](https://raw.githubusercontent.com/roman-right/vldt/main/assets/logo.svg)
 
 # VLDT: High-Performance Data Validation for Python

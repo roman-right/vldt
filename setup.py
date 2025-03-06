@@ -65,4 +65,10 @@ setup(
     long_description=open("README.md").read(),
     long_description_content_type="text/markdown",
     include_package_data=True,
+    classifiers=[
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+    ],
 )
