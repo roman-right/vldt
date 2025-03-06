@@ -53,7 +53,7 @@ module = Extension(
 
 setup(
     name="vldt",
-    version="0.1.1",
+    version="0.1.2",
     packages=find_packages(),
     ext_modules=[module],
     cmdclass={"build_ext": BuildExt},
