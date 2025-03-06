@@ -58,7 +58,7 @@ This section explains how to build, validate, and serialize data models using VL
 
 ---
 
-### 4.1 Basic Model Instantiation
+### 4.1 Defining a Data Model
 
 Define a model by subclassing `DataModel` and specifying type-annotated fields.
 
@@ -115,7 +115,7 @@ print(profile.phone)  # Output: None
 
 ### 4.3 Advanced Field Options
 
-VLDT’s `Field` function offers fine-grained control over field behavior, including dynamic defaults and alternative aliases.
+VLDT’s `Field` class offers fine-grained control over field behavior, including dynamic defaults and alternative aliases.
 
 #### 4.3.1 Default Values with Field
 
