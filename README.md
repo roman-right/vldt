@@ -35,11 +35,11 @@ VLDT is an open-source Python library written in C++ that uses annotated datacla
 
 ## 2. Performance
 
-VLDT is engineered for speed without sacrificing robust data validation. Our benchmarks focus on common operations—such as parsing, serialization, and list manipulation—where lower execution times indicate better performance.
+VLDT is engineered for speed without sacrificing robust data validation. Our benchmarks focus on common operations - such as parsing, serialization, and list manipulation.
 
   ![Performance Comparison Chart Placeholder](https://raw.githubusercontent.com/roman-right/vldt/main/assets/performance_chart.png)
 
-In our tests, VLDT consistently demonstrated efficiency, especially in iterative operations like appending model objects to a list. While both libraries perform well in parsing and serialization tasks, VLDT's performance advantages make it well-suited for high-load or time-sensitive applications.
+In our tests, VLDT demonstrated strong efficiency, making it well-suited for high-load or time-sensitive applications.
 
 For those interested in reproducing these results, the complete load test script is available in the repository [here](https://github.com/roman-right/vldt/blob/main/load_test/load_test.py).
 
