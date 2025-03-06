@@ -10,9 +10,9 @@ class DataModelMeta(type):
 
 class DataModel(_DataModel, metaclass=DataModelMeta):
     __vldt_config__: Config
-    __class_annotations__: dict
-    __instance_annotations__: dict
-    __validators__: dict
+    __vldt_class_annotations__: dict
+    __vldt_instance_annotations__: dict
+    __vldt_validators__: dict
 
     def __init_subclass__(cls, **kwargs: Any) -> None: ...
     def __eq__(self, other: Any) -> bool: ...

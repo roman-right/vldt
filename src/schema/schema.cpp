@@ -16,7 +16,6 @@ extern PyObject *SetType;
 namespace {
 PyObject *cached_type_schema_key = nullptr;
 PyObject *unified_schema_key = nullptr;
-PyObject *annotations_cache_key = nullptr;
 
 /**
  * @brief No-op capsule destructor.
@@ -26,27 +25,22 @@ void no_op_capsule_destructor(PyObject *unused) noexcept {}
 /**
  * @brief Retrieves the type annotations for a given class.
  * @param cls The class object.
- * @return A new reference to the annotations dictionary or attribute.
+ * @return A new reference to the annotations dictionary.
+ *
+ * In our updated design we assume that the Python metaclass always sets
+ * __vldt_instance_annotations__. If not present or not a dict, an error is
+ * raised.
  */
 PyObject *get_type_annotations(PyObject *cls) {
-  auto type_dict = reinterpret_cast<PyTypeObject *>(cls)->tp_dict;
-  if (type_dict && PyDict_Check(type_dict)) {
-    if (!annotations_cache_key) {
-      annotations_cache_key =
-          PyUnicode_InternFromString("__annotations_cache__");
-    }
-    PyObject *cached = PyDict_GetItem(type_dict, annotations_cache_key);
-    if (cached) {
-      Py_INCREF(cached);
-      return cached;
-    }
-    PyObject *annos = PyObject_GetAttrString(cls, "__annotations__");
-    if (annos) {
-      PyDict_SetItem(type_dict, annotations_cache_key, annos);
-    }
-    return annos;
+  PyObject *inst_annos =
+      PyObject_GetAttrString(cls, "__vldt_instance_annotations__");
+  if (!inst_annos || !PyDict_Check(inst_annos)) {
+    PyErr_SetString(PyExc_AttributeError,
+                    "__vldt_instance_annotations__ is missing or not a dict");
+    Py_XDECREF(inst_annos);
+    return nullptr;
   }
-  return PyObject_GetAttrString(cls, "__annotations__");
+  return inst_annos;
 }
 
 /**
@@ -526,42 +520,25 @@ void compile_config(PyObject *cls, SchemaCache *schema) {
 }
 
 /**
- * @brief Compiles instance annotations for the schema.
- * @param cls The class object.
- * @param schema Pointer to the SchemaCache.
- */
-void compile_instance_annotations(PyObject *cls, SchemaCache *schema) {
-  PyObject *inst_annos =
-      PyObject_GetAttrString(cls, "__instance_annotations__");
-  if (inst_annos && PyDict_Check(inst_annos)) {
-    schema->instance_annotations = inst_annos;
-  } else {
-    Py_XDECREF(inst_annos);
-    schema->instance_annotations = Py_None;
-    Py_INCREF(Py_None);
-  }
-}
-
-/**
  * @brief Compiles validators for the schema.
  * @param cls The class object.
  * @param schema Pointer to the SchemaCache.
  */
 void compile_validators(PyObject *cls, SchemaCache *schema) {
-  PyObject *validators = PyObject_GetAttrString(cls, "__validators__");
+  PyObject *validators = PyObject_GetAttrString(cls, "__vldt_validators__");
   if (validators && PyDict_Check(validators)) {
     schema->validators = validators;
     PyObject *tmp =
-        PyObject_GetAttrString(cls, "__has_field_before_validators__");
+        PyObject_GetAttrString(cls, "__vldt_has_field_before_validators__");
     schema->has_field_before = tmp ? PyObject_IsTrue(tmp) : 0;
     Py_XDECREF(tmp);
-    tmp = PyObject_GetAttrString(cls, "__has_field_after_validators__");
+    tmp = PyObject_GetAttrString(cls, "__vldt_has_field_after_validators__");
     schema->has_field_after = tmp ? PyObject_IsTrue(tmp) : 0;
     Py_XDECREF(tmp);
-    tmp = PyObject_GetAttrString(cls, "__has_model_before_validators__");
+    tmp = PyObject_GetAttrString(cls, "__vldt_has_model_before_validators__");
     schema->has_model_before = tmp ? PyObject_IsTrue(tmp) : 0;
     Py_XDECREF(tmp);
-    tmp = PyObject_GetAttrString(cls, "__has_model_after_validators__");
+    tmp = PyObject_GetAttrString(cls, "__vldt_has_model_after_validators__");
     schema->has_model_after = tmp ? PyObject_IsTrue(tmp) : 0;
     Py_XDECREF(tmp);
   } else {
@@ -623,7 +600,20 @@ PyObject *compile_schema(PyObject *cls) {
   }
   Py_DECREF(annotations);
   compile_config(cls, schema);
-  compile_instance_annotations(cls, schema);
+
+  // Directly retrieve __vldt_instance_annotations__; the Python metaclass is
+  // expected to have set this correctly.
+  schema->instance_annotations =
+      PyObject_GetAttrString(cls, "__vldt_instance_annotations__");
+  if (!schema->instance_annotations ||
+      !PyDict_Check(schema->instance_annotations)) {
+    PyErr_SetString(PyExc_AttributeError,
+                    "__vldt_instance_annotations__ must be set and be a dict");
+    Py_XDECREF(schema->instance_annotations);
+    schema->instance_annotations = Py_None;
+    Py_INCREF(Py_None);
+  }
+
   compile_validators(cls, schema);
   schema->cached_to_dict = PyObject_GetAttrString(cls, "to_dict");
   PyObject *capsule = PyCapsule_New(
