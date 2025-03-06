@@ -109,16 +109,6 @@ TypeSchema *compile_type_schema(PyObject *expected_type);
 void free_type_schema(TypeSchema *ts);
 
 /**
- * @brief Compiles and returns a PyCapsule wrapping a SchemaCache for a model
- * class.
- *
- * @param cls The model class (a Python type).
- * @return A new PyCapsule containing the SchemaCache pointer, or nullptr on
- * error.
- */
-PyObject *compile_schema(PyObject *cls);
-
-/**
  * @brief Retrieves a cached SchemaCache for the given model class.
  *
  * If the schema is not cached on the class, it is compiled.

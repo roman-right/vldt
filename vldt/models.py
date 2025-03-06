@@ -42,8 +42,8 @@ class DataModelMeta(type):
                 class_annotations[attr_name] = get_args(attr_type)[0]
             else:
                 instance_annotations[attr_name] = attr_type
-        cls.__class_annotations__ = class_annotations or {}
-        cls.__instance_annotations__ = instance_annotations or {}
+        cls.__vldt_class_annotations__ = class_annotations or {}
+        cls.__vldt_instance_annotations__ = instance_annotations or {}
 
         for attr_name, ann_type in class_annotations.items():
             value = getattr(cls, attr_name, None)
@@ -80,16 +80,16 @@ class DataModelMeta(type):
                         model_validators_before.append(attr_value)
                     elif mode == ValidatorMode.AFTER:
                         model_validators_after.append(attr_value)
-        cls.__validators__ = {
+        cls.__vldt_validators__ = {
             "field_before": field_validators_before,
             "field_after": field_validators_after,
             "model_before": model_validators_before,
             "model_after": model_validators_after,
         }
-        cls.__has_field_before_validators__ = bool(field_validators_before)
-        cls.__has_field_after_validators__ = bool(field_validators_after)
-        cls.__has_model_before_validators__ = bool(model_validators_before)
-        cls.__has_model_after_validators__ = bool(model_validators_after)
+        cls.__vldt_has_field_before_validators__ = bool(field_validators_before)
+        cls.__vldt_has_field_after_validators__ = bool(field_validators_after)
+        cls.__vldt_has_model_before_validators__ = bool(model_validators_before)
+        cls.__vldt_has_model_after_validators__ = bool(model_validators_after)
         super().__init__(name, bases, namespace)
 
 
@@ -98,8 +98,8 @@ class DataModel(_DataModel, metaclass=DataModelMeta):
 
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
-        cls.__class_annotations__ = getattr(cls, "__class_annotations__", {})
-        cls.__instance_annotations__ = getattr(cls, "__instance_annotations__", {})
+        cls.__vldt_class_annotations__ = getattr(cls, "__vldt_class_annotations__", {})
+        cls.__vldt_instance_annotations__ = getattr(cls, "__vldt_instance_annotations__", {})
 
     def __eq__(self, other):
         if hasattr(self, "to_dict") and hasattr(other, "to_dict"):
@@ -152,10 +152,10 @@ class AsyncDataModelMeta(DataModelMeta):
             "model_before": async_model_before,
             "model_after": async_model_after,
         }
-        cls.__has_async_field_before_validators__ = bool(async_field_before)
-        cls.__has_async_field_after_validators__ = bool(async_field_after)
-        cls.__has_async_model_before_validators__ = bool(async_model_before)
-        cls.__has_async_model_after_validators__ = bool(async_model_after)
+        cls.__vldt_has_async_field_before_validators__ = bool(async_field_before)
+        cls.__vldt_has_async_field_after_validators__ = bool(async_field_after)
+        cls.__vldt_has_async_model_before_validators__ = bool(async_model_before)
+        cls.__vldt_has_async_model_after_validators__ = bool(async_model_after)
 
 
 class AsyncDataModel(DataModel, metaclass=AsyncDataModelMeta):
@@ -197,7 +197,7 @@ class AsyncDataModel(DataModel, metaclass=AsyncDataModelMeta):
         Returns:
             dict: The updated keyword arguments.
         """
-        if getattr(self.__class__, "__has_async_model_before_validators__", False):
+        if getattr(self.__class__, "__vldt_has_async_model_before_validators__", False):
             for validator in self.__class__.__async_validators__.get(
                 "model_before", []
             ):
@@ -207,7 +207,7 @@ class AsyncDataModel(DataModel, metaclass=AsyncDataModelMeta):
                     result = await validator(kwargs)
                 if isinstance(result, dict):
                     kwargs.update(result)
-        if getattr(self.__class__, "__has_async_field_before_validators__", False):
+        if getattr(self.__class__, "__vldt_has_async_field_before_validators__", False):
             for field, validators in self.__class__.__async_validators__.get(
                 "field_before", {}
             ).items():
@@ -226,7 +226,7 @@ class AsyncDataModel(DataModel, metaclass=AsyncDataModelMeta):
 
         This method awaits async field and model validators that modify the instance.
         """
-        if getattr(self.__class__, "__has_async_field_after_validators__", False):
+        if getattr(self.__class__, "__vldt_has_async_field_after_validators__", False):
             for field, validators in self.__class__.__async_validators__.get(
                 "field_after", {}
             ).items():
@@ -238,7 +238,7 @@ class AsyncDataModel(DataModel, metaclass=AsyncDataModelMeta):
                         else:
                             value = await validator(value)
                     setattr(self, field, value)
-        if getattr(self.__class__, "__has_async_model_after_validators__", False):
+        if getattr(self.__class__, "__vldt_has_async_model_after_validators__", False):
             for validator in self.__class__.__async_validators__.get("model_after", []):
                 if inspect.iscoroutinefunction(validator):
                     await validator(self)

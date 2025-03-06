@@ -16,7 +16,6 @@
 #include "validation/validation.hpp"
 #include "validation/validation_validators.hpp"
 
-static PyObject *annotations_cache_key = nullptr;
 PyObject *schema_key = nullptr;
 static PyObject *field_prefix = nullptr;
 static PyObject *field_suffix = nullptr;
@@ -30,7 +29,6 @@ static PyObject *default_factory_str = nullptr;
  * @return int 0 on success, -1 on failure.
  */
 int init_data_model_globals(void) {
-  annotations_cache_key = PyUnicode_InternFromString("__annotations_cache__");
   schema_key = PyUnicode_InternFromString("__vldt_schema__");
   field_prefix = PyUnicode_InternFromString("Field '");
   field_suffix = PyUnicode_InternFromString("': ");
