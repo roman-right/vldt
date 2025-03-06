@@ -4,78 +4,8 @@ from typing import ClassVar, Union, Optional, List, Dict, Any
 import pytest
 
 from tests.conftest import type_error_to_dict
+from tests.models import Address, Product, ComplexModel, ProductWithStrId
 from vldt import DataModel, Field
-
-
-class Address(DataModel):
-    """Represents an address.
-
-    Attributes:
-        street (str): The street address.
-        zipcode (Union[int, str]): The postal code.
-        country (str): The country. Defaults to "USA".
-    """
-
-    street: str
-    zipcode: Union[int, str]
-    country: str = "USA"
-
-
-class Product(DataModel):
-    """Represents a product.
-
-    Attributes:
-        id (int): The product identifier.
-        name (str): The name of the product.
-        price (float): The price of the product.
-        in_stock (bool): Availability status. Defaults to True.
-    """
-
-    id: int
-    name: str
-    price: float
-    in_stock: bool = True
-
-
-class ProductWithStrId(DataModel):
-    """Represents a product with a string identifier.
-
-    Attributes:
-        id (str): The product identifier.
-        name (str): The name of the product.
-        price (float): The price of the product.
-        in_stock (bool): Availability status. Defaults to True.
-    """
-
-    id: str
-    name: str
-    price: float
-    in_stock: bool = True
-
-
-class ComplexModel(DataModel):
-    """Represents a complex model with various nested structures.
-
-    Class Attributes:
-        MAX_ITEMS (int): Maximum number of items.
-        TIMEOUT (float): Timeout duration in seconds.
-
-    Attributes:
-        id (Union[int, str]): Identifier.
-        metadata (Dict[str, Any]): Metadata dictionary.
-        products (List[Product]): List of Product instances.
-        address (Optional[Address]): Optional address.
-        history (List[Union[int, Dict[str, float]]]): History data.
-    """
-
-    MAX_ITEMS: ClassVar[int] = 100
-    TIMEOUT: ClassVar[float] = 5.0
-
-    id: Union[int, str]
-    metadata: Dict[str, Any]
-    products: List[Product]
-    address: Optional[Address] = None
-    history: List[Union[int, Dict[str, float]]] = []
 
 
 class TestDataModelValidation:
@@ -268,7 +198,6 @@ class TestDataModelValidation:
             name: str
 
         with pytest.raises(TypeError) as exc:
-
             class InvalidClassVars(DataModel):
                 """A model with an invalid class variable type.
 
@@ -816,3 +745,42 @@ class TestDataModelValidation:
         )
         assert m.data["address1"].zipcode == 90210
         assert m.data["product1"].id == "wrong"
+
+    def test_deep_nested_model_with_nested_dicts(self):
+        """Test a deeply nested model with nested dictionaries.
+
+        Raises:
+            AssertionError: If nested dictionaries do not validate as expected.
+        """
+
+        class DeepNestedModel(DataModel):
+            """A model with deeply nested dictionaries.
+
+            Attributes:
+                data (Dict[str, Dict[str, Dict[str, Dict[str, int]]]): A deeply nested dictionary.
+            """
+
+            data: Dict[str, Dict[str, Dict[str, Dict[str, int]]]]
+
+        obj = DeepNestedModel(
+            data={
+                "level1": {
+                    "level2": {"level3": {"level4": 42}}
+                }
+            }
+        )
+        assert obj.data["level1"]["level2"]["level3"]["level4"] == 42
+
+        # Test invalid data
+        with pytest.raises(TypeError) as exc:
+            DeepNestedModel(
+                data={
+                    "level1": {
+                        "level2": {"level3": {"level4": "wrong"}}
+                    }
+                }
+            )
+        error = type_error_to_dict(exc)
+        assert error == {
+            "data.level1.level2.level3.level4": "Expected type int, got str"
+        }
