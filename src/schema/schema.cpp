@@ -28,10 +28,12 @@ void no_op_capsule_destructor(PyObject *unused) noexcept {}
  * @return A new reference to the annotations dictionary.
  *
  * In our updated design we assume that the Python metaclass always sets
- * __vldt_instance_annotations__. If not present or not a dict, an error is raised.
+ * __vldt_instance_annotations__. If not present or not a dict, an error is
+ * raised.
  */
 PyObject *get_type_annotations(PyObject *cls) {
-  PyObject *inst_annos = PyObject_GetAttrString(cls, "__vldt_instance_annotations__");
+  PyObject *inst_annos =
+      PyObject_GetAttrString(cls, "__vldt_instance_annotations__");
   if (!inst_annos || !PyDict_Check(inst_annos)) {
     PyErr_SetString(PyExc_AttributeError,
                     "__vldt_instance_annotations__ is missing or not a dict");
@@ -599,10 +601,12 @@ PyObject *compile_schema(PyObject *cls) {
   Py_DECREF(annotations);
   compile_config(cls, schema);
 
-  // Directly retrieve __vldt_instance_annotations__; the Python metaclass is expected
-  // to have set this correctly.
-  schema->instance_annotations = PyObject_GetAttrString(cls, "__vldt_instance_annotations__");
-  if (!schema->instance_annotations || !PyDict_Check(schema->instance_annotations)) {
+  // Directly retrieve __vldt_instance_annotations__; the Python metaclass is
+  // expected to have set this correctly.
+  schema->instance_annotations =
+      PyObject_GetAttrString(cls, "__vldt_instance_annotations__");
+  if (!schema->instance_annotations ||
+      !PyDict_Check(schema->instance_annotations)) {
     PyErr_SetString(PyExc_AttributeError,
                     "__vldt_instance_annotations__ must be set and be a dict");
     Py_XDECREF(schema->instance_annotations);

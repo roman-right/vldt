@@ -99,7 +99,9 @@ class DataModel(_DataModel, metaclass=DataModelMeta):
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
         cls.__vldt_class_annotations__ = getattr(cls, "__vldt_class_annotations__", {})
-        cls.__vldt_instance_annotations__ = getattr(cls, "__vldt_instance_annotations__", {})
+        cls.__vldt_instance_annotations__ = getattr(
+            cls, "__vldt_instance_annotations__", {}
+        )
 
     def __eq__(self, other):
         if hasattr(self, "to_dict") and hasattr(other, "to_dict"):
