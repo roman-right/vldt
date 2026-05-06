@@ -2,6 +2,7 @@
 
 #include <Python.h>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 
 #ifdef __cplusplus
@@ -109,15 +110,62 @@ int DataModel_init_from_native(PyObject *self, const rapidjson::Value &native);
 
 #ifdef __cplusplus
 /**
+ * @brief Transparent hasher for unordered_map<string, V> heterogeneous lookup.
+ *
+ * Allows find()/operator[] to be called with const char*, std::string_view,
+ * or std::string without constructing a temporary std::string.
+ */
+struct VldtStringHash {
+  using is_transparent = void;
+  std::size_t operator()(std::string_view sv) const noexcept {
+    return std::hash<std::string_view>{}(sv);
+  }
+  std::size_t operator()(const std::string &s) const noexcept {
+    return std::hash<std::string_view>{}(std::string_view(s));
+  }
+  std::size_t operator()(const char *s) const noexcept {
+    return std::hash<std::string_view>{}(std::string_view(s));
+  }
+};
+
+struct VldtStringEq {
+  using is_transparent = void;
+  bool operator()(std::string_view a, std::string_view b) const noexcept {
+    return a == b;
+  }
+  bool operator()(const std::string &a, std::string_view b) const noexcept {
+    return std::string_view(a) == b;
+  }
+  bool operator()(std::string_view a, const std::string &b) const noexcept {
+    return a == std::string_view(b);
+  }
+  bool operator()(const std::string &a, const std::string &b) const noexcept {
+    return a == b;
+  }
+  bool operator()(const char *a, const std::string &b) const noexcept {
+    return std::string_view(a) == std::string_view(b);
+  }
+  bool operator()(const std::string &a, const char *b) const noexcept {
+    return std::string_view(a) == std::string_view(b);
+  }
+};
+
+/**
  * @brief Internal data structure for storing instance attributes.
  *
  * Holds the fields of a DataModel instance in a C++ unordered_map
- * for faster access, avoiding the overhead of Python’s __dict__.
+ * for faster access, avoiding the overhead of Python's __dict__.
+ *
+ * cached_schema is a borrowed pointer to the model class's compiled
+ * SchemaCache. It is set once during DataModel_init so hot paths such as
+ * to_dict and to_json can iterate fields in schema order without repeating
+ * the tp_dict capsule lookup on every call.
  */
 struct InstanceData {
-  std::unordered_map<std::string, PyObject *>
-      fields;            // Field name to value mapping.
+  std::unordered_map<std::string, PyObject *, VldtStringHash, VldtStringEq>
+      fields;            // Field name to value mapping (heterogeneous lookup).
   bool dict_initialized; // Tracks whether __dict__ has been populated.
+  void *cached_schema;   // Borrowed SchemaCache* pointer (no ownership).
 };
 
 /**

@@ -201,16 +201,21 @@ static PyObject *convert_set(PyObject *set_obj, PyObject *dict_serializer) {
  * @return New dictionary representing the DataModel, or nullptr on error.
  */
 static PyObject *convert_datamodel(PyObject *value) {
-  PyTypeObject *type_ptr = Py_TYPE(value);
-  PyObject *capsule = get_schema_cached((PyObject *)type_ptr);
-  if (!capsule) {
-    return nullptr;
-  }
+  DataModelObject *bm_value = (DataModelObject *)value;
   SchemaCache *schema =
-      (SchemaCache *)PyCapsule_GetPointer(capsule, "vldt.SchemaCache");
-  Py_DECREF(capsule);
+      (SchemaCache *)bm_value->instance_data->cached_schema;
+  PyObject *capsule = nullptr;
   if (!schema) {
-    return nullptr;
+    PyTypeObject *type_ptr = Py_TYPE(value);
+    capsule = get_schema_cached((PyObject *)type_ptr);
+    if (!capsule) {
+      return nullptr;
+    }
+    schema = (SchemaCache *)PyCapsule_GetPointer(capsule, "vldt.SchemaCache");
+    Py_DECREF(capsule);
+    if (!schema) {
+      return nullptr;
+    }
   }
   PyObject *dict_serializer = schema->dict_serializer;
   PyObject *result_dict = PyDict_New();

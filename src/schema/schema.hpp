@@ -65,6 +65,7 @@ struct TypeSchema {
 struct FieldSchema {
   PyObject *field_name;
   const char *field_name_c;
+  Py_ssize_t field_name_len;
   PyObject *alias;
   PyObject *default_value;
   PyObject *default_factory;

@@ -56,17 +56,23 @@ write_json_value(PyObject *value, PyObject *json_serializer,
   if (PyObject_TypeCheck(value, &DataModelType)) {
     auto bm = reinterpret_cast<DataModelObject *>(value);
     writer.StartObject();
-    // Iterate the schema's ordered fields rather than the unordered_map so
-    // that JSON output is deterministic and matches to_dict's ordering.
-    PyObject *capsule = get_cached_schema(Py_TYPE(value));
-    if (!capsule) {
-      return false;
-    }
-    SchemaCache *value_schema = reinterpret_cast<SchemaCache *>(
-        PyCapsule_GetPointer(capsule, "vldt.SchemaCache"));
-    Py_DECREF(capsule);
+    // Prefer the schema cached on the instance during DataModel_init so the
+    // hot path avoids a repeated tp_dict capsule lookup. Fall back to the
+    // capsule path for instances built outside the normal init route.
+    SchemaCache *value_schema =
+        reinterpret_cast<SchemaCache *>(bm->instance_data->cached_schema);
+    PyObject *capsule = nullptr;
     if (!value_schema) {
-      return false;
+      capsule = get_cached_schema(Py_TYPE(value));
+      if (!capsule) {
+        return false;
+      }
+      value_schema = reinterpret_cast<SchemaCache *>(
+          PyCapsule_GetPointer(capsule, "vldt.SchemaCache"));
+      Py_DECREF(capsule);
+      if (!value_schema) {
+        return false;
+      }
     }
     auto &fields_map = bm->instance_data->fields;
     for (Py_ssize_t i = 0; i < value_schema->num_fields; i++) {
@@ -75,7 +81,8 @@ write_json_value(PyObject *value, PyObject *json_serializer,
       if (it == fields_map.end()) {
         continue;
       }
-      writer.Key(fs->field_name_c);
+      writer.Key(fs->field_name_c,
+                 static_cast<rapidjson::SizeType>(fs->field_name_len));
       if (!write_json_value(it->second, json_serializer, writer)) {
         return false;
       }

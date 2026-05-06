@@ -88,6 +88,7 @@ PyObject *DataModel_new(PyTypeObject *type, PyObject *args, PyObject *kwds) {
   DataModelObject *self = (DataModelObject *)type->tp_alloc(type, 0);
   if (self) {
     self->instance_data = new InstanceData();
+    self->instance_data->cached_schema = nullptr;
   }
   return (PyObject *)self;
 }
@@ -156,6 +157,7 @@ int DataModel_init(PyObject *self, PyObject *args, PyObject *kwds) {
   SchemaCache *schema =
       (SchemaCache *)PyCapsule_GetPointer(capsule, "vldt.SchemaCache");
   Py_DECREF(capsule);
+  bm_self->instance_data->cached_schema = static_cast<void *>(schema);
   if (!schema) {
     PyErr_SetString(PyExc_TypeError, "Schema capsule is invalid");
     return -1;

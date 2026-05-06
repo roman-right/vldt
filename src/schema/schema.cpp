@@ -396,7 +396,9 @@ int compile_field_schema(PyObject *cls, PyObject *key, PyObject *expected_type,
                          FieldSchema *fs) {
   fs->field_name = key;
   Py_INCREF(key);
-  fs->field_name_c = PyUnicode_AsUTF8(key);
+  Py_ssize_t fname_len = 0;
+  fs->field_name_c = PyUnicode_AsUTF8AndSize(key, &fname_len);
+  fs->field_name_len = fname_len;
   fs->alias = nullptr;
   fs->default_value = VLDTUndefined;
   Py_INCREF(VLDTUndefined);
