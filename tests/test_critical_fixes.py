@@ -339,3 +339,37 @@ class TestIssue7HashEquality:
         c = M(x=2, y="a")
         assert a == b
         assert a != c
+
+
+class TestIssue9ClassVarNoneDefault:
+    """Issue #9: ClassVar fields with an explicit None default raised
+    'Missing required class attribute' because the metaclass conflated
+    'attribute absent' with 'attribute is None'.
+    """
+
+    def test_classvar_optional_none(self):
+        """ClassVar[Optional[int]] = None must be accepted."""
+
+        class M(DataModel):
+            CACHE: ClassVar[Optional[int]] = None
+            x: int
+
+        assert M.CACHE is None
+        obj = M(x=1)
+        assert obj.x == 1
+
+    def test_classvar_required_still_errors_when_missing(self):
+        """A ClassVar without a value must still raise."""
+
+        with pytest.raises(TypeError, match="Missing required class attribute"):
+            class M(DataModel):
+                CACHE: ClassVar[int]
+                x: int
+
+    def test_classvar_optional_int_value_still_validated(self):
+        """Type check still fires for non-matching ClassVar values."""
+
+        with pytest.raises(TypeError, match="Class attribute"):
+            class M(DataModel):
+                CACHE: ClassVar[Optional[int]] = "not an int"
+                x: int

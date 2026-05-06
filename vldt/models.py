@@ -1,10 +1,22 @@
 import inspect
 import sys
-from typing import ClassVar, get_type_hints, get_origin, get_args
+from typing import ClassVar, Union, get_type_hints, get_origin, get_args
 
 from vldt._vldt import DataModel as _DataModel
 from vldt.config import Config
 from vldt.validators import ValidatorMode
+
+_MISSING = object()
+
+
+def _classvar_isinstance(value, ann_type):
+    """Check value against a ClassVar inner type, allowing Union/Optional."""
+    if get_origin(ann_type) is Union:
+        return any(
+            value is None if t is type(None) else isinstance(value, t)
+            for t in get_args(ann_type)
+        )
+    return isinstance(value, ann_type)
 
 
 class DataModelMeta(type):
@@ -46,10 +58,10 @@ class DataModelMeta(type):
         cls.__vldt_instance_annotations__ = instance_annotations or {}
 
         for attr_name, ann_type in class_annotations.items():
-            value = getattr(cls, attr_name, None)
-            if value is None:
+            value = getattr(cls, attr_name, _MISSING)
+            if value is _MISSING:
                 raise TypeError(f"Missing required class attribute: {attr_name}")
-            if not isinstance(value, ann_type):
+            if not _classvar_isinstance(value, ann_type):
                 raise TypeError(
                     f"Class attribute {attr_name} must be {ann_type}, got {type(value)}"
                 )
