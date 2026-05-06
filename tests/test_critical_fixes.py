@@ -94,3 +94,48 @@ class TestIssue2SchemaCompilationCrash:
 
             obj = M(x={"a": [1, None, 3]})
             assert obj.x == {"a": [1, None, 3]}
+
+
+class TestIssue3DeserializerLeak:
+    """Issue #3: get_deserializer returned an INCREF'd object that callers
+    never DECREF'd, leaking one ref per primitive validation call.
+
+    We verify by checking that the deserializer function's refcount stays
+    stable across many model instantiations.
+    """
+
+    def test_deserializer_func_refcount_stable(self):
+        """Repeated validations must not leak refs to the deserializer function."""
+        from datetime import datetime
+        from vldt import Config
+
+        def from_string(v: str) -> datetime:
+            return datetime.strptime(v, "%Y/%m/%d %H:%M:%S")
+
+        class M(DataModel):
+            ts: datetime
+            __vldt_config__ = Config(deserializer={datetime: {str: from_string}})
+
+        gc.collect()
+        before = sys.getrefcount(from_string)
+        for _ in range(1000):
+            M(ts="2021/01/01 12:00:00")
+        gc.collect()
+        after = sys.getrefcount(from_string)
+
+        leaked = after - before
+        assert leaked < 50, (
+            f"deserializer function leaked {leaked} refs across 1000 calls "
+            "(expected near zero)"
+        )
+
+    def test_deserializer_default_path_refcount_stable(self):
+        """Even when no custom deserializer matches, refcounts stay stable."""
+        from datetime import datetime
+
+        class M(DataModel):
+            ts: datetime
+
+        for _ in range(1000):
+            obj = M(ts="2021-01-01T12:00:00")
+            assert obj.ts == datetime(2021, 1, 1, 12, 0)

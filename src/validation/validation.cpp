@@ -113,12 +113,15 @@ static PyObject *validate_plain(PyObject *value, TypeSchema *ts,
     if (deserializer_func && deserializer_func != Py_None) {
       PyObject *deserialized =
           PyObject_CallFunctionObjArgs(deserializer_func, value, nullptr);
+      Py_DECREF(deserializer_func);
       if (deserialized &&
           PyObject_IsInstance(deserialized, ts->expected_type)) {
         return deserialized;
       }
       Py_XDECREF(deserialized);
       PyErr_Clear();
+    } else {
+      Py_XDECREF(deserializer_func);
     }
 
     if (ts->expected_type == IntType) {
