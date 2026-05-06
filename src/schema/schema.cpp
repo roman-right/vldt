@@ -13,6 +13,7 @@ extern PyObject *ClassVarType;
 extern PyObject *TupleType;
 extern PyObject *SetType;
 extern PyObject *FieldType;
+extern PyObject *FieldUndefined;
 
 namespace {
 PyObject *cached_type_schema_key = nullptr;
@@ -438,8 +439,15 @@ int compile_field_schema(PyObject *cls, PyObject *key, PyObject *expected_type,
         Py_XDECREF(factory);
         PyObject *def_val = PyObject_GetAttrString(field_obj, "default");
         if (def_val) {
-          Py_DECREF(fs->default_value);
-          fs->default_value = def_val;
+          // Treat the Python UNDEFINED sentinel from vldt.fields as
+          // "no default provided" so a bare Field() leaves default_value
+          // as VLDTUndefined.
+          if (def_val == FieldUndefined) {
+            Py_DECREF(def_val);
+          } else {
+            Py_DECREF(fs->default_value);
+            fs->default_value = def_val;
+          }
         }
       }
     } else {

@@ -239,3 +239,50 @@ class TestIssue5FieldTypeDetection:
 
         obj = M()
         assert obj.widget is template
+
+
+class TestIssue6FieldNoDefault:
+    """Issue #6: Field() set self.default to None which made the field
+    silently default to None even when no default was intended. Treating
+    Field() as 'no default' must require a value at instantiation.
+    """
+
+    def test_field_no_args_requires_value(self):
+        """Field() with no default and no factory must demand a value."""
+
+        class M(DataModel):
+            a: int = Field()
+
+        with pytest.raises(TypeError) as exc:
+            M()
+        assert "Missing required field" in str(exc.value)
+
+    def test_field_no_args_accepts_value(self):
+        """Field() with no default still accepts a value at construction."""
+
+        class M(DataModel):
+            a: int = Field()
+
+        obj = M(a=42)
+        assert obj.a == 42
+
+    def test_explicit_none_default_works_for_optional(self):
+        """Field(default=None) on an Optional field still allows None."""
+
+        class M(DataModel):
+            a: Optional[int] = Field(default=None)
+
+        assert M().a is None
+        assert M(a=5).a == 5
+
+    def test_field_with_alias_only_no_default(self):
+        """Field(alias=...) with no default behaves the same as Field()."""
+
+        class M(DataModel):
+            a: int = Field(alias="a_alias")
+
+        with pytest.raises(TypeError) as exc:
+            M()
+        assert "Missing required field" in str(exc.value)
+        obj = M.from_dict({"a_alias": 7})
+        assert obj.a == 7

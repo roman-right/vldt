@@ -20,6 +20,7 @@ PyObject *schema_key = nullptr;
 static PyObject *field_prefix = nullptr;
 static PyObject *field_suffix = nullptr;
 PyObject *FieldType = nullptr;
+PyObject *FieldUndefined = nullptr;
 static PyObject *default_str = nullptr;
 static PyObject *default_factory_str = nullptr;
 
@@ -42,8 +43,13 @@ int init_data_model_globals(void) {
     return -1;
   }
   FieldType = PyObject_GetAttrString(fields_module, "Field");
-  Py_DECREF(fields_module);
   if (!FieldType) {
+    Py_DECREF(fields_module);
+    return -1;
+  }
+  FieldUndefined = PyObject_GetAttrString(fields_module, "UNDEFINED");
+  Py_DECREF(fields_module);
+  if (!FieldUndefined) {
     return -1;
   }
 
