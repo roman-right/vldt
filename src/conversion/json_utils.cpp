@@ -194,7 +194,6 @@ static PyObject *json_utils_from_json_impl(PyObject *cls,
     return nullptr;
   }
   PyObject *instance = PyObject_Call(cls, empty_tuple, dict_obj);
-  Py_DECREF(empty_tuple);
   Py_DECREF(dict_obj);
 
   return instance;
