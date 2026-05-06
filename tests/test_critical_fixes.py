@@ -54,3 +54,43 @@ class TestIssue1EmptyTupleRefcount:
             f"empty tuple refcount dropped from {before} to {after} "
             "(suggests incorrect Py_DECREF on global)"
         )
+
+
+class TestIssue2SchemaCompilationCrash:
+    """Issue #2: free_type_schema crashed on partial schema compilation.
+
+    The original code did Py_DECREF(ts->repr) without null-guarding it.
+    The crash path was OOM-only, so we exercise diverse typing constructs
+    as a smoke test that the schema compiler is robust.
+    """
+
+    def test_deeply_nested_generics_no_crash(self):
+        """Diverse and deeply-nested typing constructs must compile without crashing."""
+        from typing import Dict, List, Optional, Set, Tuple, Union
+
+        class Deep(DataModel):
+            a: Dict[str, List[Optional[Union[int, str, float]]]]
+            b: List[Dict[str, Tuple[int, str, float]]]
+            c: Optional[Dict[str, Set[int]]]
+            d: Tuple[int, str, float, bool]
+            e: Union[int, str, float, bool, None]
+
+        obj = Deep(
+            a={"k": [1, "str", None, 3.14]},
+            b=[{"k": (1, "s", 1.5)}],
+            c={"k": {1, 2, 3}},
+            d=(1, "s", 1.5, True),
+            e=None,
+        )
+        assert obj.a == {"k": [1, "str", None, 3.14]}
+
+    def test_repeated_compilation_no_crash(self):
+        """Repeatedly compiling/recompiling schemas must not crash."""
+        from typing import Dict, List, Optional
+
+        for _ in range(100):
+            class M(DataModel):
+                x: Dict[str, List[Optional[int]]]
+
+            obj = M(x={"a": [1, None, 3]})
+            assert obj.x == {"a": [1, None, 3]}

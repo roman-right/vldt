@@ -329,6 +329,10 @@ TypeSchema *compile_type_schema(PyObject *expected_type) {
 /**
  * @brief Frees the allocated TypeSchema.
  * @param ts Pointer to the TypeSchema.
+ *
+ * Each field is null-guarded so that partially-constructed TypeSchemas
+ * (resulting from a mid-compilation failure such as OOM) can be safely
+ * cleaned up without dereferencing nullptr.
  */
 void free_type_schema(TypeSchema *ts) {
   if (!ts) {
@@ -337,12 +341,10 @@ void free_type_schema(TypeSchema *ts) {
   if (ts->cached) {
     return;
   }
-  Py_DECREF(ts->expected_type);
-  Py_DECREF(ts->origin);
-  Py_DECREF(ts->repr);
-  if (ts->inner_model_type) {
-    Py_DECREF(ts->inner_model_type);
-  }
+  Py_XDECREF(ts->expected_type);
+  Py_XDECREF(ts->origin);
+  Py_XDECREF(ts->repr);
+  Py_XDECREF(ts->inner_model_type);
   if (ts->args) {
     for (Py_ssize_t i = 0; i < ts->num_args; i++) {
       free_type_schema(ts->args[i]);
