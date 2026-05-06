@@ -8,20 +8,25 @@ this_dir = os.path.abspath(os.path.dirname(__file__))
 class BuildExt(build_ext):
     def build_extensions(self):
         compiler_type = self.compiler.compiler_type
+        # Opt-in CPU dispatch via VLDT_NATIVE_ARCH=1. Off by default so the
+        # produced binaries remain portable. Distributions of binary wheels
+        # must not enable this without runtime dispatch.
+        native_arch = os.environ.get("VLDT_NATIVE_ARCH") == "1"
         for ext in self.extensions:
             if compiler_type == "msvc":
-                # MSVC flags adjusted for aggressive performance optimization
                 ext.extra_compile_args = [
                     "/Ox",
                     "/std:c++20",
                     "/GL",
                     "/fp:fast",
-                    "/arch:AVX2",
                 ]
+                if native_arch:
+                    ext.extra_compile_args.append("/arch:AVX2")
                 ext.extra_link_args = ["/LTCG"]
             else:
-                # GCC/Clang flags (Linux/macOS)
                 ext.extra_compile_args = ["-O3", "-Wall", "-std=c++20", "-flto"]
+                if native_arch:
+                    ext.extra_compile_args.append("-march=native")
                 ext.extra_link_args = ["-flto"]
         super().build_extensions()
 
