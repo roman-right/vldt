@@ -44,6 +44,7 @@ module = Extension(
         "src/schema/deserializer.cpp",
         "src/validation/validation.cpp",
         "src/validation/validation_containers.cpp",
+        "src/validation/validation_from_json.cpp",
         "src/validation/validation_primitives.cpp",
         "src/validation/validation_validators.cpp",
     ],

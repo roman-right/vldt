@@ -3,6 +3,7 @@
 #include "data_model.hpp"
 #include "init_globals.hpp"
 #include "schema/schema.hpp"
+#include "validation/validation.hpp"
 #include <Python.h>
 #include <atomic>
 #include <chrono>
@@ -201,24 +202,11 @@ static PyObject *json_utils_from_json_impl(PyObject *cls,
     return nullptr;
   }
 
-  PyObject *dict_obj = rapidjson_to_pyobject(doc);
-  if (!dict_obj) {
-    return nullptr;
-  }
-  if (!PyDict_Check(dict_obj)) {
-    Py_DECREF(dict_obj);
-    PyErr_SetString(PyExc_TypeError, "Converted JSON is not a dictionary");
-    return nullptr;
-  }
-
-  if (!empty_tuple) {
-    Py_DECREF(dict_obj);
-    return nullptr;
-  }
-  PyObject *instance = PyObject_Call(cls, empty_tuple, dict_obj);
-  Py_DECREF(dict_obj);
-
-  return instance;
+  // One-pass path: walk the rapidjson DOM with the model's compiled schema
+  // and produce the validated DataModel directly. Falls back internally to
+  // the Python-dict route only when the model declares model_before or
+  // field_before validators (which need to operate on Python objects).
+  return data_model_from_json(cls, doc, nullptr, "<root>");
 }
 
 extern "C" {
