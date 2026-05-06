@@ -108,6 +108,12 @@ class DataModel(_DataModel, metaclass=DataModelMeta):
             return self.to_dict() == other.to_dict()
         return False
 
+    # DataModel instances are mutable, so a content-based hash would silently
+    # break dict and set membership when fields change. Mark them unhashable
+    # explicitly. Python sets __hash__ to None automatically when __eq__ is
+    # defined, but we state it here so the intent is robust to refactors.
+    __hash__ = None
+
 
 class AsyncDataModelMeta(DataModelMeta):
     def __init__(cls, name, bases, namespace):

@@ -286,3 +286,56 @@ class TestIssue6FieldNoDefault:
         assert "Missing required field" in str(exc.value)
         obj = M.from_dict({"a_alias": 7})
         assert obj.a == 7
+
+
+class TestIssue7HashEquality:
+    """Issue #7: __eq__ was defined but __hash__ was not, breaking the
+    contract that equal objects must hash equal.
+
+    DataModel instances are mutable, so a hash based on contents would
+    silently break dict/set membership when fields change. The fix is to
+    set __hash__ = None, marking instances as unhashable.
+    """
+
+    def test_equal_instances_are_unhashable(self):
+        """Mutable models must be unhashable to avoid dict/set bugs."""
+
+        class M(DataModel):
+            x: int
+
+        a = M(x=1)
+        with pytest.raises(TypeError, match="unhashable"):
+            hash(a)
+
+    def test_cannot_use_as_dict_key(self):
+        """Models must not be usable as dict keys."""
+
+        class M(DataModel):
+            x: int
+
+        a = M(x=1)
+        with pytest.raises(TypeError):
+            {a: "value"}
+
+    def test_cannot_use_in_set(self):
+        """Models must not be usable as set members."""
+
+        class M(DataModel):
+            x: int
+
+        a = M(x=1)
+        with pytest.raises(TypeError):
+            {a}
+
+    def test_equality_still_works(self):
+        """Equality comparison must continue to work."""
+
+        class M(DataModel):
+            x: int
+            y: str
+
+        a = M(x=1, y="a")
+        b = M(x=1, y="a")
+        c = M(x=2, y="a")
+        assert a == b
+        assert a != c
