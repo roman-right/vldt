@@ -139,3 +139,62 @@ class TestIssue3DeserializerLeak:
         for _ in range(1000):
             obj = M(ts="2021-01-01T12:00:00")
             assert obj.ts == datetime(2021, 1, 1, 12, 0)
+
+
+class TestIssue4JsonFieldOrder:
+    """Issue #4: to_json iterated std::unordered_map, producing
+    non-deterministic field ordering. The order must match the schema
+    (i.e., the class's annotation order) and must equal to_dict's order.
+    """
+
+    def test_to_json_field_order_matches_schema(self):
+        """Field order in JSON output must match annotation order."""
+
+        class M(DataModel):
+            zebra: int
+            alpha: str
+            mike: float
+            bravo: bool
+
+        obj = M(zebra=1, alpha="a", mike=2.5, bravo=True)
+        json_str = obj.to_json()
+
+        idx_zebra = json_str.index('"zebra"')
+        idx_alpha = json_str.index('"alpha"')
+        idx_mike = json_str.index('"mike"')
+        idx_bravo = json_str.index('"bravo"')
+        assert idx_zebra < idx_alpha < idx_mike < idx_bravo, (
+            f"Expected schema order in JSON, got: {json_str}"
+        )
+
+    def test_to_json_byte_stable_across_instances(self):
+        """Two distinct equivalent instances must serialize to identical JSON."""
+
+        class M(DataModel):
+            a: int
+            b: str
+            c: float
+            d: bool
+            e: int
+
+        results = set()
+        for _ in range(20):
+            obj = M(a=1, b="x", c=1.5, d=True, e=42)
+            results.add(obj.to_json())
+        assert len(results) == 1, (
+            f"Expected one unique JSON string, got {len(results)}: {results}"
+        )
+
+    def test_to_json_matches_to_dict_order(self):
+        """JSON output ordering must match to_dict()'s ordering."""
+        import json as _json
+
+        class M(DataModel):
+            x: int
+            y: int
+            z: int
+
+        obj = M(x=1, y=2, z=3)
+        dict_keys = list(obj.to_dict().keys())
+        json_keys = list(_json.loads(obj.to_json()).keys())
+        assert json_keys == dict_keys

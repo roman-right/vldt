@@ -56,12 +56,27 @@ write_json_value(PyObject *value, PyObject *json_serializer,
   if (PyObject_TypeCheck(value, &DataModelType)) {
     auto bm = reinterpret_cast<DataModelObject *>(value);
     writer.StartObject();
-    for (auto &pair : bm->instance_data->fields) {
-      const std::string &field_name = pair.first;
-      PyObject *field_value = pair.second;
-      writer.Key(field_name.c_str(),
-                 static_cast<rapidjson::SizeType>(field_name.size()));
-      if (!write_json_value(field_value, json_serializer, writer)) {
+    // Iterate the schema's ordered fields rather than the unordered_map so
+    // that JSON output is deterministic and matches to_dict's ordering.
+    PyObject *capsule = get_cached_schema(Py_TYPE(value));
+    if (!capsule) {
+      return false;
+    }
+    SchemaCache *value_schema = reinterpret_cast<SchemaCache *>(
+        PyCapsule_GetPointer(capsule, "vldt.SchemaCache"));
+    Py_DECREF(capsule);
+    if (!value_schema) {
+      return false;
+    }
+    auto &fields_map = bm->instance_data->fields;
+    for (Py_ssize_t i = 0; i < value_schema->num_fields; i++) {
+      FieldSchema *fs = &value_schema->fields[i];
+      auto it = fields_map.find(fs->field_name_c);
+      if (it == fields_map.end()) {
+        continue;
+      }
+      writer.Key(fs->field_name_c);
+      if (!write_json_value(it->second, json_serializer, writer)) {
         return false;
       }
     }
