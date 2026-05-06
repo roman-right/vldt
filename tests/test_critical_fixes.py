@@ -198,3 +198,44 @@ class TestIssue4JsonFieldOrder:
         dict_keys = list(obj.to_dict().keys())
         json_keys = list(_json.loads(obj.to_json()).keys())
         assert json_keys == dict_keys
+
+
+class TestIssue5FieldTypeDetection:
+    """Issue #5: Field detection used hasattr('default') / hasattr('default_factory')
+    which misidentified any user object exposing those attributes as a Field.
+    """
+
+    def test_user_object_with_default_attr_used_as_default_value(self):
+        """A user-defined object with a 'default' attribute should be treated
+        as a literal default value, not as a Field descriptor."""
+
+        class CustomThing:
+            """User class that happens to have a 'default' attribute."""
+            default = "user_value"
+
+            def __repr__(self):
+                return "CustomThing()"
+
+        custom = CustomThing()
+
+        class M(DataModel):
+            thing: CustomThing = custom
+
+        obj = M()
+        assert obj.thing is custom, (
+            f"Expected default to be the CustomThing instance, got {obj.thing!r}"
+        )
+
+    def test_user_object_with_default_factory_attr_used_as_default(self):
+        """Same as above for 'default_factory'."""
+
+        class WidgetTemplate:
+            default_factory = lambda: "should_not_be_called"
+
+        template = WidgetTemplate()
+
+        class M(DataModel):
+            widget: WidgetTemplate = template
+
+        obj = M()
+        assert obj.widget is template

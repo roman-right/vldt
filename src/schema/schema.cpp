@@ -12,6 +12,7 @@ extern PyObject *UnionType;
 extern PyObject *ClassVarType;
 extern PyObject *TupleType;
 extern PyObject *SetType;
+extern PyObject *FieldType;
 
 namespace {
 PyObject *cached_type_schema_key = nullptr;
@@ -406,12 +407,12 @@ int compile_field_schema(PyObject *cls, PyObject *key, PyObject *expected_type,
     field_obj = PyObject_GetAttrString(cls, key_str);
   }
   if (field_obj) {
-    int has_descriptor_attrs = 0;
-    if (PyObject_HasAttrString(field_obj, "default") ||
-        PyObject_HasAttrString(field_obj, "default_factory")) {
-      has_descriptor_attrs = 1;
-    }
-    if (has_descriptor_attrs) {
+    // Use a proper isinstance check against the canonical Field type so that
+    // user objects which happen to expose 'default' or 'default_factory' are
+    // not misinterpreted as Field descriptors.
+    int is_field = (FieldType != nullptr) &&
+                   PyObject_IsInstance(field_obj, FieldType) == 1;
+    if (is_field) {
       PyObject *alias_obj = PyObject_GetAttrString(field_obj, "alias");
       if (alias_obj) {
         if (!PyList_Check(alias_obj)) {
