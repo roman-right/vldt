@@ -534,3 +534,42 @@ class TestIssue15VariadicTuple:
 
         obj = M.from_json('{"xs": []}')
         assert obj.xs == ()
+
+
+class TestIssue27ForwardRefSwallowed:
+    """Issue #27: get_type_hints failures were swallowed. An unresolvable
+    forward reference would let class definition succeed silently, then
+    surface as a cryptic 'SystemError' later. The metaclass should re-raise
+    with class context so the cause is obvious at definition time.
+    """
+
+    def test_unresolvable_forward_ref_fails_clearly(self):
+        """A truly undefined forward reference must raise at class definition,
+        with a message that names the offending class."""
+        with pytest.raises(NameError) as exc:
+            class Bad(DataModel):
+                x: "TotallyUndefinedType"
+        msg = str(exc.value)
+        assert "Bad" in msg, f"class name not in message: {msg}"
+        assert "TotallyUndefinedType" in msg, f"missing offending name: {msg}"
+
+    def test_self_referential_forward_ref_still_works(self):
+        """The metaclass already injects the class itself into localns so
+        self-referential forward refs ('Node' inside class Node) keep working.
+        """
+        class Node(DataModel):
+            value: int
+            next: Optional["Node"] = None
+
+        a = Node(value=1)
+        b = Node(value=2, next=a)
+        assert b.next.value == 1
+
+    def test_forward_ref_inside_generic(self):
+        """An unresolvable name inside a generic also raises clearly."""
+        from typing import List
+
+        with pytest.raises(NameError) as exc:
+            class Bad(DataModel):
+                xs: List["NopeNope"]
+        assert "Bad" in str(exc.value)

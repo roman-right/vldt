@@ -43,8 +43,10 @@ class DataModelMeta(type):
             resolved = get_type_hints(
                 cls, globalns=globalns, localns=localns, include_extras=True
             )
-        except Exception:
-            resolved = cls.__annotations__
+        except NameError as e:
+            raise NameError(
+                f"Failed to resolve type hints for {cls.__name__}: {e}"
+            ) from e
         cls.__annotations__ = resolved
 
         class_annotations = {}
