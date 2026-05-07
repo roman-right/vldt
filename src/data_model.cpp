@@ -23,6 +23,9 @@ PyObject *FieldType = nullptr;
 PyObject *FieldUndefined = nullptr;
 static PyObject *default_str = nullptr;
 static PyObject *default_factory_str = nullptr;
+// copy.deepcopy resolved once at module init so __deepcopy__ can defer to
+// it for built-in containers (list/dict/set) without per-call import cost.
+static PyObject *CopyDeepcopyFunc = nullptr;
 
 /**
  * @brief Initialize globals for DataModel.
@@ -55,6 +58,16 @@ int init_data_model_globals(void) {
 
   default_str = PyUnicode_InternFromString("default");
   default_factory_str = PyUnicode_InternFromString("default_factory");
+
+  PyObject *copy_module = PyImport_ImportModule("copy");
+  if (!copy_module) {
+    return -1;
+  }
+  CopyDeepcopyFunc = PyObject_GetAttrString(copy_module, "deepcopy");
+  Py_DECREF(copy_module);
+  if (!CopyDeepcopyFunc) {
+    return -1;
+  }
 
   return 0;
 }
@@ -401,18 +414,10 @@ int DataModel_setattro(PyObject *self, PyObject *name, PyObject *value) {
  * @return PyObject* Deep copied object.
  */
 static PyObject *deepcopy_one(PyObject *value, PyObject *memo) {
-  PyObject *deepcopy_func = PyObject_GetAttrString(value, "__deepcopy__");
-  if (!deepcopy_func) {
-    if (PyErr_ExceptionMatches(PyExc_AttributeError)) {
-      PyErr_Clear();
-      Py_INCREF(value);
-      return value;
-    }
-    return nullptr;
-  }
-  PyObject *copied = PyObject_CallFunctionObjArgs(deepcopy_func, memo, nullptr);
-  Py_DECREF(deepcopy_func);
-  return copied;
+  // Defer to copy.deepcopy so containers (list, dict, set) and arbitrary
+  // user types are deep-copied correctly. The previous shortcut that just
+  // INCREF'd values lacking __deepcopy__ silently shared mutable state.
+  return PyObject_CallFunctionObjArgs(CopyDeepcopyFunc, value, memo, nullptr);
 }
 
 static PyObject *DataModel_deepcopy(PyObject *self, PyObject *args) {
@@ -430,11 +435,20 @@ static PyObject *DataModel_deepcopy(PyObject *self, PyObject *args) {
   DataModelObject *src = (DataModelObject *)self;
   DataModelObject *dst = (DataModelObject *)new_obj;
   dst->instance_data = new InstanceData();
-  dst->instance_data->cached_schema = src->instance_data->cached_schema;
+  SchemaCache *schema =
+      static_cast<SchemaCache *>(src->instance_data->cached_schema);
+  dst->instance_data->cached_schema = schema;
   dst->instance_data->dict_initialized = false;
 
-  dst->instance_data->fields.resize(src->instance_data->fields.size(), nullptr);
-  for (size_t i = 0; i < src->instance_data->fields.size(); i++) {
+  // Each field is deep-copied via copy.deepcopy and then re-validated
+  // against its schema. This catches type-invariant violations introduced
+  // by direct mutation of mutable contents (e.g. list field whose contents
+  // were appended-to with a wrong-typed value), instead of silently
+  // propagating the broken state into the copy.
+  ErrorCollector collector;
+  Py_ssize_t n_src = static_cast<Py_ssize_t>(src->instance_data->fields.size());
+  dst->instance_data->fields.resize(static_cast<size_t>(n_src), nullptr);
+  for (Py_ssize_t i = 0; i < n_src; i++) {
     PyObject *v = src->instance_data->fields[i];
     if (!v) {
       continue;
@@ -444,7 +458,23 @@ static PyObject *DataModel_deepcopy(PyObject *self, PyObject *args) {
       Py_DECREF(new_obj);
       return nullptr;
     }
-    dst->instance_data->fields[i] = copied;
+    if (schema && i < schema->num_fields) {
+      FieldSchema *fs = &schema->fields[i];
+      PyObject *validated = validate_and_convert(
+          copied, fs->type_schema, &collector, fs->field_name_c,
+          schema->deserializers);
+      Py_DECREF(copied);
+      if (!validated) {
+        // collector has the error; surface it now and bail.
+        std::string err = collector.to_json();
+        PyErr_SetString(PyExc_TypeError, err.c_str());
+        Py_DECREF(new_obj);
+        return nullptr;
+      }
+      dst->instance_data->fields[i] = validated;
+    } else {
+      dst->instance_data->fields[i] = copied;
+    }
   }
 
   if (src->instance_data->extra_fields) {

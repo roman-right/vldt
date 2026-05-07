@@ -675,3 +675,95 @@ class TestIssue13ReentrantDictIteration:
             cls = type(f"M{n}", (DataModel,), {"__annotations__": dict(attrs)})
             obj = cls(a=1, b=2, c=3)
             assert (obj.a, obj.b, obj.c) == (1, 2, 3)
+
+
+class TestIssue18DeepcopyValidates:
+    """Issue #18: __deepcopy__ allocated a new instance, copied each field
+    via __deepcopy__, and stored the result without checking it against the
+    schema. A model whose mutable field contents had been mutated to an
+    invariant-breaking state would deepcopy into the same broken state with
+    no error.
+
+    The contract after the fix: deepcopy's output is itself a fully valid
+    instance. Every field is run through validate_and_convert against its
+    type schema, so corruption from external mutation is caught at copy
+    time.
+    """
+
+    def test_normal_deepcopy_still_works(self):
+        """The straight valid case keeps producing equal-but-distinct copies."""
+        import copy
+        from typing import List
+
+        class M(DataModel):
+            id: int
+            name: str
+            tags: List[str]
+
+        obj = M(id=1, name="x", tags=["a", "b"])
+        clone = copy.deepcopy(obj)
+        assert clone == obj
+        assert clone is not obj
+        # Mutating the clone's list does not touch the source.
+        clone.tags.append("c")
+        assert obj.tags == ["a", "b"]
+
+    def test_deepcopy_rejects_mutated_list_field(self):
+        """If a List[int] was mutated to contain a non-int, deepcopy raises."""
+        import copy
+        from typing import List
+
+        class M(DataModel):
+            xs: List[int] = Field(default_factory=list)
+
+        obj = M()
+        obj.xs.append("not an int")
+        with pytest.raises(TypeError):
+            copy.deepcopy(obj)
+
+    def test_deepcopy_rejects_mutated_dict_field(self):
+        import copy
+        from typing import Dict
+
+        class M(DataModel):
+            d: Dict[str, int] = Field(default_factory=dict)
+
+        obj = M()
+        obj.d["bad"] = "not an int"
+        with pytest.raises(TypeError):
+            copy.deepcopy(obj)
+
+    def test_deepcopy_of_nested_model_validates(self):
+        import copy
+        from typing import List
+
+        class Inner(DataModel):
+            n: int
+
+        class Outer(DataModel):
+            inner: Inner
+            extras: List[Inner]
+
+        obj = Outer(inner=Inner(n=1), extras=[Inner(n=2), Inner(n=3)])
+        clone = copy.deepcopy(obj)
+        assert clone.inner.n == 1
+        assert [i.n for i in clone.extras] == [2, 3]
+        assert clone is not obj
+        assert clone.inner is not obj.inner
+
+    def test_deepcopy_with_optional(self):
+        """Optional fields keep their None or value through deepcopy."""
+        import copy
+
+        class M(DataModel):
+            x: int
+            y: Optional[int] = None
+
+        a = M(x=1)
+        b = copy.deepcopy(a)
+        assert b.x == 1
+        assert b.y is None
+
+        c = M(x=2, y=5)
+        d = copy.deepcopy(c)
+        assert d.y == 5
