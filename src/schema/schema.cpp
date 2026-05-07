@@ -288,6 +288,7 @@ TypeSchema *compile_type_schema(PyObject *expected_type) {
   ts->cached = 0;
   ts->is_data_model = 0;
   ts->container_kind = CK_NONE;
+  ts->primitive_kind = PK_NONE;
   ts->inner_model_type = nullptr;
   if (PyType_Check(expected_type)) {
     int is_sub = PyObject_IsSubclass(expected_type, (PyObject *)&DataModelType);
@@ -296,6 +297,19 @@ TypeSchema *compile_type_schema(PyObject *expected_type) {
     } else if (is_sub) {
       ts->is_data_model = 1;
     }
+  }
+  // Cache primitive kind for fast dispatch in hot loops. Bool first because
+  // bool is also a subclass of int. Any is matched against AnyType.
+  if (expected_type == BoolType) {
+    ts->primitive_kind = PK_BOOL;
+  } else if (expected_type == IntType) {
+    ts->primitive_kind = PK_INT;
+  } else if (expected_type == FloatType) {
+    ts->primitive_kind = PK_FLOAT;
+  } else if (expected_type == StrType) {
+    ts->primitive_kind = PK_STR;
+  } else if (expected_type == AnyType) {
+    ts->primitive_kind = PK_ANY;
   }
   PyObject *origin = PyObject_GetAttrString(expected_type, "__origin__");
   if (!origin) {

@@ -27,6 +27,25 @@ enum ContainerKind {
 };
 
 /**
+ * @brief Primitive kind cached on TypeSchema for fast dispatch in hot loops.
+ *
+ * PK_NONE  - not a primitive
+ * PK_ANY   - typing.Any
+ * PK_INT   - int
+ * PK_FLOAT - float
+ * PK_STR   - str
+ * PK_BOOL  - bool
+ */
+enum PrimitiveKind {
+  PK_NONE = 0,
+  PK_ANY = 1,
+  PK_INT = 2,
+  PK_FLOAT = 3,
+  PK_STR = 4,
+  PK_BOOL = 5
+};
+
+/**
  * @brief A structure that caches generic type information.
  *
  * This unified schema holds:
@@ -51,6 +70,7 @@ struct TypeSchema {
   int is_optional;
   int cached;
   int container_kind;
+  int primitive_kind;
   PyObject *inner_model_type;
 };
 

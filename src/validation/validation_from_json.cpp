@@ -42,7 +42,32 @@ PyObject *data_model_from_json(PyObject *cls,
                                const char *error_path);
 
 /**
+ * @brief Forward declaration: primitive leaf path used by container loops.
+ */
+static inline PyObject *primitive_leaf_from_json(const rapidjson::Value &val,
+                                                 TypeSchema *ts);
+
+/**
+ * @brief Build the per-element error path "{base}.{index}" lazily.
+ */
+static void build_indexed_path(char *buf, size_t buf_size, const char *base,
+                               size_t base_len, rapidjson::SizeType i) {
+  if (base_len >= buf_size - 2) {
+    base_len = buf_size - 2;
+  }
+  std::memcpy(buf, base, base_len);
+  buf[base_len] = '.';
+  std::snprintf(buf + base_len + 1, buf_size - base_len - 1, "%u", i);
+}
+
+/**
  * @brief Validate a JSON array against a list[T] schema.
+ *
+ * When T is a primitive type (int, float, str, bool, Any) we use a tight
+ * inner loop that avoids the per-element function call into
+ * validate_and_convert_from_json and avoids building the per-element error
+ * path on the success path. The error path is materialized only when an
+ * element fails.
  */
 static PyObject *validate_list_from_json(const rapidjson::Value &val,
                                          TypeSchema *ts,
@@ -61,20 +86,39 @@ static PyObject *validate_list_from_json(const rapidjson::Value &val,
     return nullptr;
   }
 
+  TypeSchema *inner = ts->args[0];
   size_t base_len = std::strlen(error_path);
-  std::array<char, 256> new_path;
-  if (base_len >= new_path.size() - 2) {
-    base_len = new_path.size() - 2;
-  }
-  std::memcpy(new_path.data(), error_path, base_len);
-  new_path[base_len] = '.';
-  new_path[base_len + 1] = '\0';
 
+  if (inner->primitive_kind != PK_NONE) {
+    // Tight loop for primitive elements. Skip the snprintf on success.
+    for (rapidjson::SizeType i = 0; i < size; i++) {
+      const rapidjson::Value &v = val[i];
+      PyObject *item = primitive_leaf_from_json(v, inner);
+      if (!item) {
+        // Coercion or null: fall back to the full path with a real error
+        // path so any error message points at the right element.
+        std::array<char, 256> new_path;
+        build_indexed_path(new_path.data(), new_path.size(), error_path,
+                           base_len, i);
+        item = validate_and_convert_from_json(v, inner, collector,
+                                              new_path.data(), deserializers);
+        if (!item) {
+          Py_DECREF(new_list);
+          return nullptr;
+        }
+      }
+      PyList_SET_ITEM(new_list, i, item);
+    }
+    return new_list;
+  }
+
+  // Generic path: full dispatch per element.
+  std::array<char, 256> new_path;
   for (rapidjson::SizeType i = 0; i < size; i++) {
-    std::snprintf(new_path.data() + base_len + 1,
-                  new_path.size() - base_len - 1, "%u", i);
+    build_indexed_path(new_path.data(), new_path.size(), error_path, base_len,
+                       i);
     PyObject *item = validate_and_convert_from_json(
-        val[i], ts->args[0], collector, new_path.data(), deserializers);
+        val[i], inner, collector, new_path.data(), deserializers);
     if (!item) {
       Py_DECREF(new_list);
       return nullptr;
@@ -87,9 +131,10 @@ static PyObject *validate_list_from_json(const rapidjson::Value &val,
 /**
  * @brief Validate a JSON object against a dict[K, V] schema.
  *
- * Only string keys are produced from JSON, so the key schema is checked
- * against the JSON-decoded string (which then runs through normal
- * validate_and_convert).
+ * Keys are always JSON strings. When the key schema is plain str we skip
+ * validate_and_convert entirely and use the freshly-built PyUnicode as the
+ * key. When the value schema is a primitive we go through the inline leaf
+ * path. The error path is materialized only on failure.
  */
 static PyObject *validate_dict_from_json(const rapidjson::Value &val,
                                          TypeSchema *ts,
@@ -109,41 +154,62 @@ static PyObject *validate_dict_from_json(const rapidjson::Value &val,
 
   TypeSchema *key_schema = ts->args[0];
   TypeSchema *val_schema = ts->args[1];
+  bool key_is_str = (key_schema->primitive_kind == PK_STR);
+  bool val_is_primitive = (val_schema->primitive_kind != PK_NONE);
 
   size_t base_len = std::strlen(error_path);
   std::array<char, 256> new_path;
-  if (base_len >= new_path.size() - 2) {
-    base_len = new_path.size() - 2;
-  }
-  std::memcpy(new_path.data(), error_path, base_len);
-  new_path[base_len] = '.';
-  new_path[base_len + 1] = '\0';
 
   for (auto itr = val.MemberBegin(); itr != val.MemberEnd(); ++itr) {
     const char *key_str = itr->name.GetString();
     rapidjson::SizeType key_len = itr->name.GetStringLength();
-    std::snprintf(new_path.data() + base_len + 1,
-                  new_path.size() - base_len - 1, "%s", key_str);
 
     PyObject *py_key = PyUnicode_FromStringAndSize(key_str, key_len);
     if (!py_key) {
       Py_DECREF(new_dict);
       return nullptr;
     }
-    PyObject *conv_key = validate_and_convert(py_key, key_schema, collector,
-                                              new_path.data(), deserializers);
-    Py_DECREF(py_key);
-    if (!conv_key) {
-      Py_DECREF(new_dict);
-      return nullptr;
+    PyObject *conv_key;
+    if (key_is_str) {
+      conv_key = py_key;
+    } else {
+      // Build error path lazily for the key validation.
+      if (base_len >= new_path.size() - 2) {
+        base_len = new_path.size() - 2;
+      }
+      std::memcpy(new_path.data(), error_path, base_len);
+      new_path[base_len] = '.';
+      std::snprintf(new_path.data() + base_len + 1,
+                    new_path.size() - base_len - 1, "%s", key_str);
+      conv_key = validate_and_convert(py_key, key_schema, collector,
+                                      new_path.data(), deserializers);
+      Py_DECREF(py_key);
+      if (!conv_key) {
+        Py_DECREF(new_dict);
+        return nullptr;
+      }
     }
 
-    PyObject *conv_val = validate_and_convert_from_json(
-        itr->value, val_schema, collector, new_path.data(), deserializers);
+    PyObject *conv_val = nullptr;
+    if (val_is_primitive) {
+      conv_val = primitive_leaf_from_json(itr->value, val_schema);
+    }
     if (!conv_val) {
-      Py_DECREF(conv_key);
-      Py_DECREF(new_dict);
-      return nullptr;
+      // Slow path or coercion: build the error path.
+      if (base_len >= new_path.size() - 2) {
+        base_len = new_path.size() - 2;
+      }
+      std::memcpy(new_path.data(), error_path, base_len);
+      new_path[base_len] = '.';
+      std::snprintf(new_path.data() + base_len + 1,
+                    new_path.size() - base_len - 1, "%s", key_str);
+      conv_val = validate_and_convert_from_json(
+          itr->value, val_schema, collector, new_path.data(), deserializers);
+      if (!conv_val) {
+        Py_DECREF(conv_key);
+        Py_DECREF(new_dict);
+        return nullptr;
+      }
     }
     if (PyDict_SetItem(new_dict, conv_key, conv_val) < 0) {
       Py_DECREF(conv_key);
@@ -185,14 +251,23 @@ static PyObject *validate_tuple_from_json(const rapidjson::Value &val,
   if (!new_tuple) {
     return nullptr;
   }
+  size_t base_len = std::strlen(error_path);
+  std::array<char, 256> new_path;
   for (rapidjson::SizeType i = 0; i < size; i++) {
-    std::array<char, 256> new_path;
-    std::snprintf(new_path.data(), new_path.size(), "%s.%u", error_path, i);
-    PyObject *conv = validate_and_convert_from_json(
-        val[i], ts->args[i], collector, new_path.data(), deserializers);
+    TypeSchema *inner = ts->args[i];
+    PyObject *conv = nullptr;
+    if (inner->primitive_kind != PK_NONE) {
+      conv = primitive_leaf_from_json(val[i], inner);
+    }
     if (!conv) {
-      Py_DECREF(new_tuple);
-      return nullptr;
+      build_indexed_path(new_path.data(), new_path.size(), error_path,
+                         base_len, i);
+      conv = validate_and_convert_from_json(val[i], inner, collector,
+                                            new_path.data(), deserializers);
+      if (!conv) {
+        Py_DECREF(new_tuple);
+        return nullptr;
+      }
     }
     PyTuple_SET_ITEM(new_tuple, i, conv);
   }
@@ -217,14 +292,23 @@ static PyObject *validate_set_from_json(const rapidjson::Value &val,
   if (!new_set) {
     return nullptr;
   }
+  TypeSchema *inner = ts->args[0];
+  size_t base_len = std::strlen(error_path);
+  std::array<char, 256> new_path;
   for (rapidjson::SizeType i = 0; i < val.Size(); i++) {
-    std::array<char, 256> new_path;
-    std::snprintf(new_path.data(), new_path.size(), "%s.%u", error_path, i);
-    PyObject *conv = validate_and_convert_from_json(
-        val[i], ts->args[0], collector, new_path.data(), deserializers);
+    PyObject *conv = nullptr;
+    if (inner->primitive_kind != PK_NONE) {
+      conv = primitive_leaf_from_json(val[i], inner);
+    }
     if (!conv) {
-      Py_DECREF(new_set);
-      return nullptr;
+      build_indexed_path(new_path.data(), new_path.size(), error_path,
+                         base_len, i);
+      conv = validate_and_convert_from_json(val[i], inner, collector,
+                                            new_path.data(), deserializers);
+      if (!conv) {
+        Py_DECREF(new_set);
+        return nullptr;
+      }
     }
     if (PySet_Add(new_set, conv) < 0) {
       Py_DECREF(conv);
@@ -271,6 +355,63 @@ static PyObject *validate_union_from_json(const rapidjson::Value &val,
 }
 
 /**
+ * @brief Inline-friendly primitive leaf path.
+ *
+ * Tries to construct the Python value directly from the rapidjson value,
+ * dispatching via the primitive_kind cached on the TypeSchema. Returns
+ * nullptr without setting an error if the JSON kind does not match (the
+ * caller is expected to fall back to the slow materialize path).
+ */
+static inline PyObject *
+primitive_leaf_from_json(const rapidjson::Value &val, TypeSchema *ts) {
+  switch (ts->primitive_kind) {
+  case PK_INT:
+    if (val.IsInt()) {
+      return PyLong_FromLong(val.GetInt());
+    }
+    if (val.IsInt64()) {
+      return PyLong_FromLongLong(val.GetInt64());
+    }
+    if (val.IsUint()) {
+      return PyLong_FromUnsignedLong(val.GetUint());
+    }
+    if (val.IsUint64()) {
+      return PyLong_FromUnsignedLongLong(val.GetUint64());
+    }
+    return nullptr;
+  case PK_FLOAT:
+    if (val.IsDouble() || val.IsLosslessDouble()) {
+      return PyFloat_FromDouble(val.GetDouble());
+    }
+    if (val.IsInt()) {
+      return PyFloat_FromDouble(static_cast<double>(val.GetInt()));
+    }
+    if (val.IsInt64()) {
+      return PyFloat_FromDouble(static_cast<double>(val.GetInt64()));
+    }
+    return nullptr;
+  case PK_STR:
+    if (val.IsString()) {
+      return PyUnicode_FromStringAndSize(val.GetString(),
+                                         val.GetStringLength());
+    }
+    return nullptr;
+  case PK_BOOL:
+    if (val.IsBool()) {
+      if (val.GetBool()) {
+        Py_RETURN_TRUE;
+      }
+      Py_RETURN_FALSE;
+    }
+    return nullptr;
+  case PK_ANY:
+    return materialize(val);
+  default:
+    return nullptr;
+  }
+}
+
+/**
  * @brief Public entry point: validate a rapidjson value against a TypeSchema.
  *
  * Fast path for matching primitive types and structural matches; falls back
@@ -285,7 +426,7 @@ PyObject *validate_and_convert_from_json(const rapidjson::Value &val,
                                          Deserializers *deserializers) {
   // None / Optional handling.
   if (val.IsNull()) {
-    if (ts->is_optional || ts->expected_type == AnyType) {
+    if (ts->is_optional || ts->primitive_kind == PK_ANY) {
       Py_INCREF(Py_None);
       return Py_None;
     }
@@ -293,72 +434,32 @@ PyObject *validate_and_convert_from_json(const rapidjson::Value &val,
     // materialized fallback below.
   }
 
-  // Any: materialize directly.
-  if (ts->expected_type == AnyType) {
-    return materialize(val);
-  }
-
-  // Nested DataModel.
-  if (ts->is_data_model && val.IsObject()) {
+  // Primitive fast paths via the cached primitive_kind.
+  if (ts->primitive_kind != PK_NONE) {
+    PyObject *prim = primitive_leaf_from_json(val, ts);
+    if (prim) {
+      return prim;
+    }
+    // Not a matching primitive kind; fall through to coercion.
+  } else if (ts->is_data_model && val.IsObject()) {
     return data_model_from_json(ts->expected_type, val, collector, error_path);
-  }
-
-  // Containers.
-  switch (ts->container_kind) {
-  case CK_LIST:
-    return validate_list_from_json(val, ts, collector, error_path,
-                                   deserializers);
-  case CK_DICT:
-    return validate_dict_from_json(val, ts, collector, error_path,
-                                   deserializers);
-  case CK_TUPLE:
-    return validate_tuple_from_json(val, ts, collector, error_path,
+  } else {
+    switch (ts->container_kind) {
+    case CK_LIST:
+      return validate_list_from_json(val, ts, collector, error_path,
+                                     deserializers);
+    case CK_DICT:
+      return validate_dict_from_json(val, ts, collector, error_path,
+                                     deserializers);
+    case CK_TUPLE:
+      return validate_tuple_from_json(val, ts, collector, error_path,
+                                      deserializers);
+    case CK_SET:
+      return validate_set_from_json(val, ts, collector, error_path,
                                     deserializers);
-  case CK_SET:
-    return validate_set_from_json(val, ts, collector, error_path,
-                                  deserializers);
-  case CK_UNION:
-    return validate_union_from_json(val, ts, collector, error_path,
-                                    deserializers);
-  }
-
-  // Primitive fast paths. Match the JSON type to the expected Python type and
-  // emit a single allocation per leaf.
-  if (ts->expected_type == IntType) {
-    if (val.IsInt()) {
-      return PyLong_FromLong(val.GetInt());
-    }
-    if (val.IsInt64()) {
-      return PyLong_FromLongLong(val.GetInt64());
-    }
-    if (val.IsUint()) {
-      return PyLong_FromUnsignedLong(val.GetUint());
-    }
-    if (val.IsUint64()) {
-      return PyLong_FromUnsignedLongLong(val.GetUint64());
-    }
-    // Fall through to the coercion path below.
-  } else if (ts->expected_type == FloatType) {
-    if (val.IsDouble() || val.IsLosslessDouble()) {
-      return PyFloat_FromDouble(val.GetDouble());
-    }
-    if (val.IsInt()) {
-      return PyFloat_FromDouble(static_cast<double>(val.GetInt()));
-    }
-    if (val.IsInt64()) {
-      return PyFloat_FromDouble(static_cast<double>(val.GetInt64()));
-    }
-  } else if (ts->expected_type == StrType) {
-    if (val.IsString()) {
-      return PyUnicode_FromStringAndSize(val.GetString(),
-                                         val.GetStringLength());
-    }
-  } else if (ts->expected_type == BoolType) {
-    if (val.IsBool()) {
-      if (val.GetBool()) {
-        Py_RETURN_TRUE;
-      }
-      Py_RETURN_FALSE;
+    case CK_UNION:
+      return validate_union_from_json(val, ts, collector, error_path,
+                                      deserializers);
     }
   }
 
