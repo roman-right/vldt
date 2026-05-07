@@ -65,6 +65,23 @@ int run_field_after_validators(SchemaCache *schema, PyObject *cls,
 int run_model_after_validators(SchemaCache *schema, PyObject *cls,
                                PyObject *self);
 
+/**
+ * Run a list of field validators on a single value.
+ *
+ * Each validator is called as `validator(cls, value)` and the result becomes
+ * the next validator's input. The returned value is a new reference; the
+ * caller is responsible for releasing it. The input `value` ref is consumed.
+ * Returns nullptr on the first validator that raises (with the Python error
+ * indicator set).
+ *
+ * @param cls           The model class.
+ * @param validators    A Python list of validator callables/classmethods.
+ * @param value         New reference to the value being validated. Consumed.
+ * @return New reference to the final validated value, or nullptr on error.
+ */
+PyObject *run_field_validators_on_value(PyObject *cls, PyObject *validators,
+                                        PyObject *value);
+
 #ifdef __cplusplus
 }
 #endif

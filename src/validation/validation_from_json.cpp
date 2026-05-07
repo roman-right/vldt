@@ -377,16 +377,119 @@ PyObject *validate_and_convert_from_json(const rapidjson::Value &val,
 }
 
 /**
+ * @brief Look up a field in a rapidjson object by canonical name then aliases.
+ *
+ * Returns a pointer to the matching value (still owned by the rapidjson DOM)
+ * or nullptr if neither the canonical name nor any alias is present.
+ */
+static const rapidjson::Value *
+lookup_member_in_json(const rapidjson::Value &json_obj, FieldSchema *fs) {
+  if (fs->alias && PyList_Check(fs->alias)) {
+    Py_ssize_t n_alias = PyList_Size(fs->alias);
+    for (Py_ssize_t j = 0; j < n_alias; j++) {
+      PyObject *alias_key = PyList_GetItem(fs->alias, j);
+      if (!PyUnicode_Check(alias_key)) {
+        continue;
+      }
+      Py_ssize_t alias_len = 0;
+      const char *alias_c = PyUnicode_AsUTF8AndSize(alias_key, &alias_len);
+      if (!alias_c) {
+        PyErr_Clear();
+        continue;
+      }
+      auto m = json_obj.FindMember(
+          rapidjson::Value(rapidjson::StringRef(alias_c, alias_len)));
+      if (m != json_obj.MemberEnd()) {
+        return &m->value;
+      }
+    }
+  }
+  auto m = json_obj.FindMember(rapidjson::Value(rapidjson::StringRef(
+      fs->field_name_c, static_cast<rapidjson::SizeType>(fs->field_name_len))));
+  if (m != json_obj.MemberEnd()) {
+    return &m->value;
+  }
+  return nullptr;
+}
+
+/**
+ * @brief Look up a field in a Python dict by canonical name then aliases.
+ *
+ * Returns a borrowed reference to the matching value, or nullptr if absent.
+ */
+static PyObject *lookup_member_in_dict(PyObject *kwds, FieldSchema *fs) {
+  if (fs->alias && PyList_Check(fs->alias)) {
+    Py_ssize_t n_alias = PyList_Size(fs->alias);
+    for (Py_ssize_t j = 0; j < n_alias; j++) {
+      PyObject *alias_key = PyList_GetItem(fs->alias, j);
+      PyObject *v = PyDict_GetItem(kwds, alias_key);
+      if (v) {
+        return v;
+      }
+    }
+  }
+  return PyDict_GetItem(kwds, fs->field_name);
+}
+
+/**
+ * @brief Resolve the default for a field that was not present in the input.
+ *
+ * Returns a new reference to the default value, or nullptr on missing-field
+ * (recording an error in collector) or when the default factory raised.
+ */
+static PyObject *resolve_default(FieldSchema *fs, ErrorCollector *collector) {
+  if (fs->default_factory != Py_None &&
+      PyCallable_Check(fs->default_factory)) {
+    PyObject *v = PyObject_CallFunctionObjArgs(fs->default_factory, nullptr);
+    if (!v) {
+      if (collector) {
+        collector->add_error(
+            fs->field_name_c,
+            "Missing required field and default factory call failed");
+      }
+      PyErr_Clear();
+    }
+    return v;
+  }
+  if (fs->default_value != VLDTUndefined) {
+    Py_INCREF(fs->default_value);
+    return fs->default_value;
+  }
+  if (fs->type_schema->is_optional) {
+    Py_INCREF(Py_None);
+    return Py_None;
+  }
+  if (collector) {
+    collector->add_error(fs->field_name_c, "Missing required field");
+  }
+  return nullptr;
+}
+
+/**
  * @brief Construct a DataModel directly from a rapidjson object.
  *
  * Allocates a fresh instance of `cls`, populates instance_data->fields by
- * walking the schema and looking up each field in the JSON object (or the
- * fallback alias list), and runs the standard validator hooks.
+ * walking the schema fields once, and runs every validator hook (model_before,
+ * field_before, field_after, model_after) along the way.
  *
- * If the model declares model_before or field_before validators, those need
- * to operate on Python objects, so we fall back to materializing a Python
- * dict and calling the existing DataModel_init pipeline. This keeps validator
- * semantics identical.
+ * Three observations make the one-pass walk possible without giving up
+ * validator semantics:
+ *
+ *   - model_before takes a dict, so when it is present we materialize the
+ *     dict once, run the validator, then drive the schema walk from the
+ *     (possibly modified) dict instead of the rapidjson DOM. The rest of
+ *     the work is still single-pass.
+ *   - field_before takes a single Python value, so we only materialize the
+ *     specific field's rapidjson value when that field has a field_before
+ *     validator. Other fields take the direct rapidjson path and avoid the
+ *     extra allocation.
+ *   - field_after and model_after run on the constructed instance, so they
+ *     fit into the same flow regardless of where the field values came from.
+ *
+ * The only structural fallback is for subclasses that override __init__ in
+ * Python (notably AsyncDataModel, which stashes kwargs and runs validation
+ * on await). Those classes need cls.__call__ to dispatch through the Python
+ * override, so we materialize a dict and call cls(**dict).
  */
 PyObject *data_model_from_json(PyObject *cls,
                                const rapidjson::Value &json_obj,
@@ -403,17 +506,10 @@ PyObject *data_model_from_json(PyObject *cls,
     return nullptr;
   }
 
-  // Subclasses that override __init__ in Python (most importantly
-  // AsyncDataModel, which stashes the kwargs into _init_kwargs and runs the
-  // validation pipeline on await) need cls.__call__ to dispatch through the
-  // Python override. The C tp_init of those classes points to slot_tp_init
-  // rather than DataModel_init, so detect that and fall back.
+  // AsyncDataModel and any user subclass that overrides __init__ need the
+  // Python-level dispatch. tp_init is replaced by slot_tp_init in that case.
   PyTypeObject *cls_type = (PyTypeObject *)cls;
-  bool needs_python_init = (cls_type->tp_init != DataModel_init);
-
-  // Validators that take a Python dict / Python value need the fallback path.
-  if (needs_python_init || schema->has_model_before ||
-      schema->has_field_before) {
+  if (cls_type->tp_init != DataModel_init) {
     PyObject *dict_obj = rapidjson_to_pyobject(json_obj);
     if (!dict_obj) {
       return nullptr;
@@ -426,7 +522,6 @@ PyObject *data_model_from_json(PyObject *cls,
     PyObject *instance = PyObject_Call(cls, empty_tuple, dict_obj);
     Py_DECREF(dict_obj);
     if (!instance && outer_collector) {
-      // Surface validator errors back to the outer error path.
       PyObject *exc_type = nullptr, *exc_value = nullptr, *exc_tb = nullptr;
       PyErr_Fetch(&exc_type, &exc_value, &exc_tb);
       PyObject *exc_str = exc_value ? PyObject_Str(exc_value) : nullptr;
@@ -442,9 +537,39 @@ PyObject *data_model_from_json(PyObject *cls,
     return instance;
   }
 
-  PyTypeObject *type = (PyTypeObject *)cls;
-  DataModelObject *self = (DataModelObject *)type->tp_alloc(type, 0);
+  // model_before runs against a dict. Build one only if needed.
+  PyObject *kwds = nullptr;
+  if (schema->has_model_before) {
+    kwds = rapidjson_to_pyobject(json_obj);
+    if (!kwds) {
+      return nullptr;
+    }
+    if (!PyDict_Check(kwds)) {
+      Py_DECREF(kwds);
+      PyErr_SetString(PyExc_TypeError, "Expected JSON object for model");
+      return nullptr;
+    }
+    if (run_model_before_validators(schema, cls, &kwds) != 0) {
+      Py_DECREF(kwds);
+      return nullptr;
+    }
+  }
+
+  // Pre-fetch the field_before dict once so per-field lookups stay cheap.
+  PyObject *field_before_dict = nullptr;
+  if (schema->has_field_before && schema->validators &&
+      PyDict_Check(schema->validators)) {
+    field_before_dict =
+        PyDict_GetItemString(schema->validators, "field_before");
+    if (field_before_dict && !PyDict_Check(field_before_dict)) {
+      field_before_dict = nullptr;
+    }
+  }
+
+  DataModelObject *self =
+      (DataModelObject *)cls_type->tp_alloc(cls_type, 0);
   if (!self) {
+    Py_XDECREF(kwds);
     return nullptr;
   }
   self->instance_data = new InstanceData();
@@ -454,74 +579,94 @@ PyObject *data_model_from_json(PyObject *cls,
 
   for (Py_ssize_t i = 0; i < schema->num_fields; i++) {
     FieldSchema *fs = &schema->fields[i];
-    const rapidjson::Value *member_val = nullptr;
 
-    // Alias lookup.
-    if (fs->alias && PyList_Check(fs->alias)) {
-      Py_ssize_t n_alias = PyList_Size(fs->alias);
-      for (Py_ssize_t j = 0; j < n_alias; j++) {
-        PyObject *alias_key = PyList_GetItem(fs->alias, j);
-        if (!PyUnicode_Check(alias_key)) {
-          continue;
-        }
-        Py_ssize_t alias_len = 0;
-        const char *alias_c =
-            PyUnicode_AsUTF8AndSize(alias_key, &alias_len);
-        if (!alias_c) {
-          PyErr_Clear();
-          continue;
-        }
-        auto m = json_obj.FindMember(rapidjson::Value(
-            rapidjson::StringRef(alias_c, alias_len)));
-        if (m != json_obj.MemberEnd()) {
-          member_val = &m->value;
-          break;
-        }
-      }
-    }
-    // Canonical field name lookup.
-    if (!member_val) {
-      auto m = json_obj.FindMember(rapidjson::Value(rapidjson::StringRef(
-          fs->field_name_c,
-          static_cast<rapidjson::SizeType>(fs->field_name_len))));
-      if (m != json_obj.MemberEnd()) {
-        member_val = &m->value;
+    // Per-field field_before validators (may be absent for this field).
+    PyObject *fb_validators = nullptr;
+    if (field_before_dict) {
+      fb_validators = PyDict_GetItem(field_before_dict, fs->field_name);
+      if (fb_validators && !PyList_Check(fb_validators)) {
+        fb_validators = nullptr;
       }
     }
 
     PyObject *new_value = nullptr;
-    if (member_val) {
-      new_value = validate_and_convert_from_json(*member_val, fs->type_schema,
-                                                 &collector, fs->field_name_c,
-                                                 schema->deserializers);
-      if (!new_value) {
-        // collector already contains the error.
-        continue;
-      }
-    } else {
-      // Fall back to defaults.
-      if (fs->default_factory != Py_None &&
-          PyCallable_Check(fs->default_factory)) {
-        new_value = PyObject_CallFunctionObjArgs(fs->default_factory, nullptr);
-        if (!new_value) {
-          collector.add_error(
-              fs->field_name_c,
-              "Missing required field and default factory call failed");
+    if (kwds) {
+      // model_before path: drive from the (possibly modified) dict.
+      PyObject *raw = lookup_member_in_dict(kwds, fs);
+      PyObject *value = nullptr;
+      if (raw) {
+        Py_INCREF(raw);
+        value = raw;
+      } else {
+        value = resolve_default(fs, &collector);
+        if (!value) {
           continue;
         }
-      } else if (fs->default_value != VLDTUndefined) {
-        new_value = fs->default_value;
-        Py_INCREF(new_value);
-      } else if (fs->type_schema->is_optional) {
-        Py_INCREF(Py_None);
-        new_value = Py_None;
-      } else {
-        collector.add_error(fs->field_name_c, "Missing required field");
-        continue;
       }
+      if (fb_validators) {
+        value = run_field_validators_on_value(cls, fb_validators, value);
+        if (!value) {
+          // Validator raised. Propagate via the existing C exception.
+          Py_DECREF((PyObject *)self);
+          Py_DECREF(kwds);
+          return nullptr;
+        }
+      }
+      new_value = validate_and_convert(value, fs->type_schema, &collector,
+                                       fs->field_name_c, schema->deserializers);
+      Py_DECREF(value);
+    } else {
+      // No model_before: look up directly in the rapidjson DOM.
+      const rapidjson::Value *member = lookup_member_in_json(json_obj, fs);
+      if (!member) {
+        PyObject *value = resolve_default(fs, &collector);
+        if (!value) {
+          continue;
+        }
+        if (fb_validators) {
+          value = run_field_validators_on_value(cls, fb_validators, value);
+          if (!value) {
+            Py_DECREF((PyObject *)self);
+            return nullptr;
+          }
+        }
+        new_value = validate_and_convert(value, fs->type_schema, &collector,
+                                         fs->field_name_c,
+                                         schema->deserializers);
+        Py_DECREF(value);
+      } else if (fb_validators) {
+        // field_before requires a Python value: materialize this leaf only.
+        PyObject *value = materialize(*member);
+        if (!value) {
+          Py_DECREF((PyObject *)self);
+          return nullptr;
+        }
+        value = run_field_validators_on_value(cls, fb_validators, value);
+        if (!value) {
+          Py_DECREF((PyObject *)self);
+          return nullptr;
+        }
+        new_value = validate_and_convert(value, fs->type_schema, &collector,
+                                         fs->field_name_c,
+                                         schema->deserializers);
+        Py_DECREF(value);
+      } else {
+        // Direct rapidjson path: no allocation for the dict, no allocation
+        // for the field value beyond the validated result itself.
+        new_value = validate_and_convert_from_json(*member, fs->type_schema,
+                                                   &collector,
+                                                   fs->field_name_c,
+                                                   schema->deserializers);
+      }
+    }
+    if (!new_value) {
+      // collector already contains the error.
+      continue;
     }
     self->instance_data->fields[fs->field_name_c] = new_value;
   }
+
+  Py_XDECREF(kwds);
 
   if (collector.has_errors()) {
     if (outer_collector) {

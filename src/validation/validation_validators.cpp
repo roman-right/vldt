@@ -272,3 +272,36 @@ int run_model_after_validators(SchemaCache *schema, PyObject *cls,
   }
   return 0;
 }
+
+/**
+ * @brief Run a list of field validators on a single value.
+ *
+ * Iterates the validator list, calling each as validator(cls, value) and
+ * threading the returned value through. The input `value` reference is
+ * consumed; the returned reference is owned by the caller. Returns nullptr
+ * on the first validator that raises.
+ */
+PyObject *run_field_validators_on_value(PyObject *cls, PyObject *validators,
+                                        PyObject *value) {
+  if (!validators || !PyList_Check(validators)) {
+    return value;
+  }
+  Py_ssize_t n = PyList_Size(validators);
+  for (Py_ssize_t i = 0; i < n; i++) {
+    PyObject *validator = PyList_GetItem(validators, i);
+    PyObject *callable = get_callable_validator(validator);
+    if (!callable) {
+      continue;
+    }
+    PyObject *new_value =
+        PyObject_CallFunctionObjArgs(callable, cls, value, nullptr);
+    Py_DECREF(callable);
+    if (!new_value) {
+      Py_DECREF(value);
+      return nullptr;
+    }
+    Py_DECREF(value);
+    value = new_value;
+  }
+  return value;
+}
