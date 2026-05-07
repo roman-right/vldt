@@ -1,9 +1,11 @@
 #pragma once
 
 #include <Python.h>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <vector>
 
 #ifdef __cplusplus
 #include <rapidjson/document.h>
@@ -113,7 +115,8 @@ int DataModel_init_from_native(PyObject *self, const rapidjson::Value &native);
  * @brief Transparent hasher for unordered_map<string, V> heterogeneous lookup.
  *
  * Allows find()/operator[] to be called with const char*, std::string_view,
- * or std::string without constructing a temporary std::string.
+ * or std::string without constructing a temporary std::string. Reused by the
+ * extra_fields fallback below.
  */
 struct VldtStringHash {
   using is_transparent = void;
@@ -150,11 +153,21 @@ struct VldtStringEq {
   }
 };
 
+using ExtraFieldsMap =
+    std::unordered_map<std::string, PyObject *, VldtStringHash, VldtStringEq>;
+
 /**
  * @brief Internal data structure for storing instance attributes.
  *
- * Holds the fields of a DataModel instance in a C++ unordered_map
- * for faster access, avoiding the overhead of Python's __dict__.
+ * Schema-declared fields live in `fields`, a flat vector indexed by the
+ * field's position in the model's SchemaCache::fields array. Writes are
+ * O(1) with no hashing and no per-field heap allocation, and reads use
+ * SchemaCache::name_index to map a name to a vector index in O(1).
+ *
+ * Attributes that are not declared on the schema (set via
+ * `obj.something = ...`) live in the lazily-allocated `extra_fields`
+ * unordered_map, so the rare path keeps its previous semantics without
+ * imposing any cost on the schema-driven hot path.
  *
  * cached_schema is a borrowed pointer to the model class's compiled
  * SchemaCache. It is set once during DataModel_init so hot paths such as
@@ -162,10 +175,10 @@ struct VldtStringEq {
  * the tp_dict capsule lookup on every call.
  */
 struct InstanceData {
-  std::unordered_map<std::string, PyObject *, VldtStringHash, VldtStringEq>
-      fields;            // Field name to value mapping (heterogeneous lookup).
-  bool dict_initialized; // Tracks whether __dict__ has been populated.
-  void *cached_schema;   // Borrowed SchemaCache* pointer (no ownership).
+  std::vector<PyObject *> fields;
+  std::unique_ptr<ExtraFieldsMap> extra_fields;
+  bool dict_initialized;
+  void *cached_schema;
 };
 
 /**

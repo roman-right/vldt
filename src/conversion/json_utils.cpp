@@ -75,16 +75,17 @@ write_json_value(PyObject *value, PyObject *json_serializer,
         return false;
       }
     }
-    auto &fields_map = bm->instance_data->fields;
-    for (Py_ssize_t i = 0; i < value_schema->num_fields; i++) {
-      FieldSchema *fs = &value_schema->fields[i];
-      auto it = fields_map.find(fs->field_name_c);
-      if (it == fields_map.end()) {
+    const auto &fields_vec = bm->instance_data->fields;
+    Py_ssize_t n_have = static_cast<Py_ssize_t>(fields_vec.size());
+    for (Py_ssize_t i = 0; i < value_schema->num_fields && i < n_have; i++) {
+      PyObject *fv = fields_vec[i];
+      if (!fv) {
         continue;
       }
+      FieldSchema *fs = &value_schema->fields[i];
       writer.Key(fs->field_name_c,
                  static_cast<rapidjson::SizeType>(fs->field_name_len));
-      if (!write_json_value(it->second, json_serializer, writer)) {
+      if (!write_json_value(fv, json_serializer, writer)) {
         return false;
       }
     }

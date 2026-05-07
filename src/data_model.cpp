@@ -89,6 +89,7 @@ PyObject *DataModel_new(PyTypeObject *type, PyObject *args, PyObject *kwds) {
   if (self) {
     self->instance_data = new InstanceData();
     self->instance_data->cached_schema = nullptr;
+    self->instance_data->dict_initialized = false;
   }
   return (PyObject *)self;
 }
@@ -100,8 +101,13 @@ PyObject *DataModel_new(PyTypeObject *type, PyObject *args, PyObject *kwds) {
  */
 void DataModel_dealloc(PyObject *self) {
   DataModelObject *bm_self = (DataModelObject *)self;
-  for (auto &pair : bm_self->instance_data->fields) {
-    Py_XDECREF(pair.second);
+  for (PyObject *v : bm_self->instance_data->fields) {
+    Py_XDECREF(v);
+  }
+  if (bm_self->instance_data->extra_fields) {
+    for (auto &p : *bm_self->instance_data->extra_fields) {
+      Py_XDECREF(p.second);
+    }
   }
   delete bm_self->instance_data;
   Py_TYPE(self)->tp_free(self);
@@ -110,19 +116,48 @@ void DataModel_dealloc(PyObject *self) {
 /**
  * @brief DataModel.__getattro__ implementation.
  *
+ * Resolves declared fields through SchemaCache::name_index in O(1), reading
+ * the value out of the instance's flat fields vector. Falls back to the
+ * lazily-allocated extra_fields map for arbitrary attributes set by user
+ * code, then to PyObject_GenericGetAttr for class-level attributes (methods,
+ * descriptors, etc).
+ *
  * @param self Python object.
  * @param name Attribute name.
- * @return PyObject* Attribute value.
+ * @return PyObject* Attribute value (new reference) or nullptr on error.
  */
 PyObject *DataModel_getattro(PyObject *self, PyObject *name) {
   DataModelObject *bm_self = (DataModelObject *)self;
   InstanceData *data = bm_self->instance_data;
 
-  const char *attr_name = PyUnicode_AsUTF8(name);
-  auto it = data->fields.find(attr_name);
-  if (it != data->fields.end()) {
-    Py_INCREF(it->second);
-    return it->second;
+  Py_ssize_t name_len = 0;
+  const char *attr_name = PyUnicode_AsUTF8AndSize(name, &name_len);
+  if (!attr_name) {
+    return nullptr;
+  }
+
+  SchemaCache *schema = static_cast<SchemaCache *>(data->cached_schema);
+  if (schema) {
+    auto it = schema->name_index.find(
+        std::string_view(attr_name, static_cast<size_t>(name_len)));
+    if (it != schema->name_index.end()) {
+      Py_ssize_t idx = it->second;
+      if (idx < static_cast<Py_ssize_t>(data->fields.size())) {
+        PyObject *v = data->fields[idx];
+        if (v) {
+          Py_INCREF(v);
+          return v;
+        }
+      }
+    }
+  }
+  if (data->extra_fields) {
+    auto it = data->extra_fields->find(
+        std::string_view(attr_name, static_cast<size_t>(name_len)));
+    if (it != data->extra_fields->end()) {
+      Py_INCREF(it->second);
+      return it->second;
+    }
   }
   return PyObject_GenericGetAttr(self, name);
 }
@@ -171,6 +206,7 @@ int DataModel_init(PyObject *self, PyObject *args, PyObject *kwds) {
   }
 
   InstanceData *data = bm_self->instance_data;
+  data->fields.assign(schema->num_fields, nullptr);
   ErrorCollector collector;
   for (Py_ssize_t i = 0; i < schema->num_fields; i++) {
     FieldSchema *fs = &schema->fields[i];
@@ -222,22 +258,17 @@ int DataModel_init(PyObject *self, PyObject *args, PyObject *kwds) {
     PyObject *new_value = validate_and_convert(
         value, fs->type_schema, &collector, field_path, schema->deserializers);
     if (!new_value) {
-      auto &fields = data->fields;
-      if (fields.find(field_path) != fields.end()) {
-        Py_XDECREF(fields[field_path]);
-      }
+      // Keep the raw value in the slot so post-error inspection still works
+      // (the error has already been recorded into the collector).
+      Py_XDECREF(data->fields[i]);
       Py_INCREF(value);
-      fields[field_path] = value;
-      continue;
-    } else {
+      data->fields[i] = value;
       Py_DECREF(value);
-      value = new_value;
-      auto &fields = data->fields;
-      if (fields.find(field_path) != fields.end()) {
-        Py_XDECREF(fields[field_path]);
-      }
-      fields[field_path] = value;
+      continue;
     }
+    Py_DECREF(value);
+    Py_XDECREF(data->fields[i]);
+    data->fields[i] = new_value;
   }
 
   if (collector.has_errors()) {
@@ -267,7 +298,16 @@ int DataModel_setattro(PyObject *self, PyObject *name, PyObject *value) {
   DataModelObject *bm_self = (DataModelObject *)self;
   InstanceData *data = bm_self->instance_data;
 
-  // Retrieve the cached schema for the model
+  if (!PyUnicode_Check(name)) {
+    return PyObject_GenericSetAttr(self, name, value);
+  }
+  Py_ssize_t name_len = 0;
+  const char *attr_name = PyUnicode_AsUTF8AndSize(name, &name_len);
+  if (!attr_name) {
+    return -1;
+  }
+  std::string_view name_view(attr_name, static_cast<size_t>(name_len));
+
   PyObject *capsule = get_schema_cached((PyObject *)Py_TYPE(self));
   if (!capsule) {
     PyErr_SetString(PyExc_TypeError, "Could not retrieve model schema");
@@ -276,68 +316,81 @@ int DataModel_setattro(PyObject *self, PyObject *name, PyObject *value) {
   SchemaCache *schema =
       (SchemaCache *)PyCapsule_GetPointer(capsule, "vldt.SchemaCache");
   Py_DECREF(capsule);
+  if (!schema) {
+    return -1;
+  }
 
-  // Use the instance annotations cached in the schema.
-  // (Ensure that schema->instance_annotations was set during schema
-  // compilation.)
   PyObject *annotations = schema->instance_annotations;
-  Py_INCREF(annotations);
 
-  if (annotations && PyDict_Contains(annotations, name)) {
+  // Schema-declared field: validate and write into the indexed slot.
+  if (annotations && PyDict_Check(annotations) &&
+      PyDict_Contains(annotations, name)) {
     PyObject *expected_type = PyDict_GetItemWithError(annotations, name);
-    if (expected_type) {
-      if (is_class_var(expected_type)) {
-        PyErr_SetString(PyExc_AttributeError, "Cannot set ClassVar attribute");
-        Py_DECREF(annotations);
-        return -1;
+    if (!expected_type) {
+      return -1;
+    }
+    if (is_class_var(expected_type)) {
+      PyErr_SetString(PyExc_AttributeError, "Cannot set ClassVar attribute");
+      return -1;
+    }
+    TypeSchema *ts = compile_type_schema(expected_type);
+    if (!ts) {
+      return -1;
+    }
+    ErrorCollector collector;
+    PyObject *converted = validate_and_convert(
+        value, ts, &collector, attr_name, schema->deserializers);
+    free_type_schema(ts);
+    if (!converted) {
+      if (collector.has_errors()) {
+        std::string err_json = collector.to_json();
+        PyErr_SetString(PyExc_TypeError, err_json.c_str());
       } else {
-        // Compile a TypeSchema from the expected type
-        TypeSchema *ts = compile_type_schema(expected_type);
-        if (!ts) {
-          Py_DECREF(annotations);
-          return -1;
-        }
-        const char *attr_name = PyUnicode_AsUTF8(name);
-        ErrorCollector collector;
-        PyObject *converted = validate_and_convert(
-            value, ts, &collector, attr_name, schema->deserializers);
-        free_type_schema(ts);
-        if (!converted) {
-          if (collector.has_errors()) {
-            std::string err_json = collector.to_json();
-            PyErr_SetString(PyExc_TypeError, err_json.c_str());
-          } else {
-            PyErr_Format(PyExc_TypeError, "Invalid value for attribute %R",
-                         name);
-          }
-          Py_DECREF(annotations);
-          return -1;
-        }
-        // Use the converted value for assignment
-        value = converted;
+        PyErr_Format(PyExc_TypeError, "Invalid value for attribute %R", name);
       }
+      return -1;
     }
-    // Update the instance data with the new value
-    const char *attr_name = PyUnicode_AsUTF8(name);
-    auto &fields = data->fields;
-    if (fields.find(attr_name) != fields.end()) {
-      Py_XDECREF(fields[attr_name]);
+    auto it = schema->name_index.find(name_view);
+    if (it == schema->name_index.end()) {
+      // Annotation present but not in the index (shouldn't happen for normal
+      // models, but stay defensive). Fall through to the extra map.
+      if (!data->extra_fields) {
+        data->extra_fields = std::make_unique<ExtraFieldsMap>();
+      }
+      auto &m = *data->extra_fields;
+      auto exi = m.find(name_view);
+      if (exi != m.end()) {
+        Py_XDECREF(exi->second);
+        exi->second = converted;
+      } else {
+        m.emplace(std::string(attr_name, static_cast<size_t>(name_len)),
+                  converted);
+      }
+      return 0;
     }
-    fields[attr_name] = value;
-    Py_DECREF(annotations);
-    return 0;
-  } else {
-    // If the attribute is not defined in the annotations, assign it directly
-    const char *attr_name = PyUnicode_AsUTF8(name);
-    auto &fields = data->fields;
-    if (fields.find(attr_name) != fields.end()) {
-      Py_XDECREF(fields[attr_name]);
+    Py_ssize_t idx = it->second;
+    if (idx >= static_cast<Py_ssize_t>(data->fields.size())) {
+      data->fields.resize(static_cast<size_t>(schema->num_fields), nullptr);
     }
-    Py_INCREF(value);
-    fields[attr_name] = value;
-    Py_DECREF(annotations);
+    Py_XDECREF(data->fields[idx]);
+    data->fields[idx] = converted;
     return 0;
   }
+
+  // Non-schema attribute: park it in the lazy extras map.
+  if (!data->extra_fields) {
+    data->extra_fields = std::make_unique<ExtraFieldsMap>();
+  }
+  auto &m = *data->extra_fields;
+  Py_INCREF(value);
+  auto exi = m.find(name_view);
+  if (exi != m.end()) {
+    Py_XDECREF(exi->second);
+    exi->second = value;
+  } else {
+    m.emplace(std::string(attr_name, static_cast<size_t>(name_len)), value);
+  }
+  return 0;
 }
 
 /**
@@ -347,6 +400,21 @@ int DataModel_setattro(PyObject *self, PyObject *name, PyObject *value) {
  * @param args Arguments.
  * @return PyObject* Deep copied object.
  */
+static PyObject *deepcopy_one(PyObject *value, PyObject *memo) {
+  PyObject *deepcopy_func = PyObject_GetAttrString(value, "__deepcopy__");
+  if (!deepcopy_func) {
+    if (PyErr_ExceptionMatches(PyExc_AttributeError)) {
+      PyErr_Clear();
+      Py_INCREF(value);
+      return value;
+    }
+    return nullptr;
+  }
+  PyObject *copied = PyObject_CallFunctionObjArgs(deepcopy_func, memo, nullptr);
+  Py_DECREF(deepcopy_func);
+  return copied;
+}
+
 static PyObject *DataModel_deepcopy(PyObject *self, PyObject *args) {
   PyObject *memo;
   if (!PyArg_ParseTuple(args, "O", &memo)) {
@@ -362,29 +430,33 @@ static PyObject *DataModel_deepcopy(PyObject *self, PyObject *args) {
   DataModelObject *src = (DataModelObject *)self;
   DataModelObject *dst = (DataModelObject *)new_obj;
   dst->instance_data = new InstanceData();
+  dst->instance_data->cached_schema = src->instance_data->cached_schema;
+  dst->instance_data->dict_initialized = false;
 
-  for (const auto &pair : src->instance_data->fields) {
-    PyObject *copied_field = nullptr;
-    PyObject *deepcopy_func =
-        PyObject_GetAttrString(pair.second, "__deepcopy__");
-    if (deepcopy_func == nullptr) {
-      if (PyErr_ExceptionMatches(PyExc_AttributeError)) {
-        PyErr_Clear();
-        Py_INCREF(pair.second);
-        copied_field = pair.second;
-      } else {
-        Py_DECREF(new_obj);
-        return nullptr;
-      }
-    } else {
-      copied_field = PyObject_CallFunctionObjArgs(deepcopy_func, memo, nullptr);
-      Py_DECREF(deepcopy_func);
-      if (copied_field == nullptr) {
-        Py_DECREF(new_obj);
-        return nullptr;
-      }
+  dst->instance_data->fields.resize(src->instance_data->fields.size(), nullptr);
+  for (size_t i = 0; i < src->instance_data->fields.size(); i++) {
+    PyObject *v = src->instance_data->fields[i];
+    if (!v) {
+      continue;
     }
-    dst->instance_data->fields[pair.first] = copied_field;
+    PyObject *copied = deepcopy_one(v, memo);
+    if (!copied) {
+      Py_DECREF(new_obj);
+      return nullptr;
+    }
+    dst->instance_data->fields[i] = copied;
+  }
+
+  if (src->instance_data->extra_fields) {
+    dst->instance_data->extra_fields = std::make_unique<ExtraFieldsMap>();
+    for (const auto &p : *src->instance_data->extra_fields) {
+      PyObject *copied = deepcopy_one(p.second, memo);
+      if (!copied) {
+        Py_DECREF(new_obj);
+        return nullptr;
+      }
+      dst->instance_data->extra_fields->emplace(p.first, copied);
+    }
   }
   return new_obj;
 }

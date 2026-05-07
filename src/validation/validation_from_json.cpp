@@ -678,6 +678,8 @@ PyObject *data_model_from_json(PyObject *cls,
   }
   self->instance_data = new InstanceData();
   self->instance_data->cached_schema = static_cast<void *>(schema);
+  self->instance_data->dict_initialized = false;
+  self->instance_data->fields.assign(schema->num_fields, nullptr);
 
   ErrorCollector collector;
 
@@ -785,7 +787,8 @@ PyObject *data_model_from_json(PyObject *cls,
       // collector already contains the error.
       continue;
     }
-    self->instance_data->fields[fs->field_name_c] = new_value;
+    Py_XDECREF(self->instance_data->fields[i]);
+    self->instance_data->fields[i] = new_value;
   }
 
   Py_XDECREF(kwds);
@@ -839,10 +842,17 @@ extern "C" int DataModel_init_from_native(PyObject *self,
   DataModelObject *src = (DataModelObject *)built;
   DataModelObject *dst = (DataModelObject *)self;
   // Free anything dst already has.
-  for (auto &p : dst->instance_data->fields) {
-    Py_XDECREF(p.second);
+  for (PyObject *v : dst->instance_data->fields) {
+    Py_XDECREF(v);
+  }
+  if (dst->instance_data->extra_fields) {
+    for (auto &p : *dst->instance_data->extra_fields) {
+      Py_XDECREF(p.second);
+    }
+    dst->instance_data->extra_fields.reset();
   }
   dst->instance_data->fields = std::move(src->instance_data->fields);
+  dst->instance_data->extra_fields = std::move(src->instance_data->extra_fields);
   dst->instance_data->cached_schema = src->instance_data->cached_schema;
   Py_DECREF(built);
   return 0;

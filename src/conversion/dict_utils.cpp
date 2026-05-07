@@ -223,14 +223,14 @@ static PyObject *convert_datamodel(PyObject *value) {
     return nullptr;
   }
   DataModelObject *bm = (DataModelObject *)value;
-  for (Py_ssize_t i = 0; i < schema->num_fields; i++) {
-    FieldSchema *fs = &schema->fields[i];
-    std::string field_key(fs->field_name_c);
-    auto it = bm->instance_data->fields.find(field_key);
-    if (it == bm->instance_data->fields.end()) {
+  const auto &fields_vec = bm->instance_data->fields;
+  Py_ssize_t n = static_cast<Py_ssize_t>(fields_vec.size());
+  for (Py_ssize_t i = 0; i < schema->num_fields && i < n; i++) {
+    PyObject *field_value = fields_vec[i];
+    if (!field_value) {
       continue;
     }
-    PyObject *field_value = it->second;
+    FieldSchema *fs = &schema->fields[i];
     PyObject *conv_value = convert_to_dict(field_value, dict_serializer);
     if (!conv_value) {
       Py_DECREF(result_dict);
