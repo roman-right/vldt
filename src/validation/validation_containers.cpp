@@ -297,11 +297,17 @@ PyObject *validate_set(PyObject *value, TypeSchema *ts,
 PyObject *validate_union(PyObject *value, TypeSchema *ts,
                          ErrorCollector *collector, const char *error_path,
                          Deserializers *deserializers) {
+  bool value_is_bool = PyBool_Check(value);
   for (Py_ssize_t i = 0; i < ts->num_args; i++) {
     TypeSchema *candidate = ts->args[i];
     PyObject *check_type = (candidate->origin != Py_None)
                                ? candidate->origin
                                : candidate->expected_type;
+    // Bool is a subclass of int; an `int` arm in a Union must not silently
+    // swallow True/False (matches the asymmetry fix in validate_plain).
+    if (value_is_bool && check_type == IntType) {
+      continue;
+    }
     if (PyObject_IsInstance(value, check_type)) {
       Py_INCREF(value);
       return value;

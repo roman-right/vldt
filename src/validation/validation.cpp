@@ -101,6 +101,15 @@ static PyObject *validate_plain(PyObject *value, TypeSchema *ts,
                                 ErrorCollector *collector,
                                 const char *error_path,
                                 Deserializers *deserializers) {
+  // bool is a subclass of int in Python, but DataModel field typing is
+  // stricter: an `int` field must reject True/False. Without this guard the
+  // PyObject_IsInstance check below would silently pass them through.
+  if (ts->expected_type == IntType && PyBool_Check(value)) {
+    if (collector) {
+      collector->add_error(error_path, "Expected type int, got bool");
+    }
+    return nullptr;
+  }
   if (PyObject_IsInstance(value, ts->expected_type)) {
     Py_INCREF(value);
     return value;
@@ -115,7 +124,8 @@ static PyObject *validate_plain(PyObject *value, TypeSchema *ts,
           PyObject_CallFunctionObjArgs(deserializer_func, value, nullptr);
       Py_DECREF(deserializer_func);
       if (deserialized &&
-          PyObject_IsInstance(deserialized, ts->expected_type)) {
+          PyObject_IsInstance(deserialized, ts->expected_type) &&
+          !(ts->expected_type == IntType && PyBool_Check(deserialized))) {
         return deserialized;
       }
       Py_XDECREF(deserialized);

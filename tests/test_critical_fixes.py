@@ -373,3 +373,81 @@ class TestIssue9ClassVarNoneDefault:
             class M(DataModel):
                 CACHE: ClassVar[Optional[int]] = "not an int"
                 x: int
+
+
+class TestIssue14BoolIntAsymmetry:
+    """Issue #14: int fields silently accepted True/False because bool is a
+    subclass of int. The reverse was not true (bool fields rejected ints), so
+    the validator behaviour was asymmetric and surprising. Explicitly reject
+    bool when an int is expected.
+    """
+
+    def test_int_field_rejects_true(self):
+        """An int field must reject True even though bool is a subclass of int."""
+
+        class M(DataModel):
+            x: int
+
+        with pytest.raises(TypeError, match="Expected type int, got bool"):
+            M(x=True)
+
+    def test_int_field_rejects_false(self):
+        class M(DataModel):
+            x: int
+
+        with pytest.raises(TypeError, match="Expected type int, got bool"):
+            M(x=False)
+
+    def test_int_field_still_accepts_real_ints(self):
+        class M(DataModel):
+            x: int
+
+        assert M(x=42).x == 42
+        assert M(x=0).x == 0
+        assert M(x=-7).x == -7
+
+    def test_bool_field_unchanged(self):
+        """This issue scopes only int rejecting bool. Bool's existing
+        coercion of int (via bool(value)) stays as-is and is the subject of
+        a separate conversation about strict mode."""
+
+        class M(DataModel):
+            x: bool
+
+        assert M(x=True).x is True
+        assert M(x=False).x is False
+
+    def test_int_via_from_dict_rejects_bool(self):
+        class M(DataModel):
+            x: int
+
+        with pytest.raises(TypeError, match="Expected type int, got bool"):
+            M.from_dict({"x": True})
+
+    def test_int_via_from_json_rejects_bool(self):
+        class M(DataModel):
+            x: int
+
+        with pytest.raises(TypeError, match="Expected type int, got bool"):
+            M.from_json('{"x": true}')
+
+    def test_int_in_list_rejects_bool(self):
+        from typing import List
+
+        class M(DataModel):
+            xs: List[int]
+
+        with pytest.raises(TypeError):
+            M(xs=[1, True, 3])
+
+    def test_optional_int_rejects_bool(self):
+        class M(DataModel):
+            x: Optional[int] = None
+
+        # None still works.
+        assert M().x is None
+        # int still works.
+        assert M(x=5).x == 5
+        # bool is still rejected.
+        with pytest.raises(TypeError):
+            M(x=True)
