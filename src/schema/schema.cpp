@@ -643,6 +643,39 @@ PyObject *compile_schema(PyObject *cls) {
 
   compile_validators(cls, schema);
   schema->cached_to_dict = PyObject_GetAttrString(cls, "to_dict");
+
+  // Populate the name -> field-index map (canonical names + any aliases).
+  // First-writer wins, matching the order: aliases listed earlier on the
+  // same field take precedence over the canonical name only because the
+  // walk path checks aliases first; here we simply ensure every name
+  // resolves to its owning field.
+  for (Py_ssize_t i = 0; i < schema->num_fields; i++) {
+    FieldSchema *fs = &schema->fields[i];
+    if (fs->field_name_c) {
+      schema->name_index.emplace(
+          std::string(fs->field_name_c,
+                      static_cast<size_t>(fs->field_name_len)),
+          i);
+    }
+    if (fs->alias && PyList_Check(fs->alias)) {
+      Py_ssize_t n_alias = PyList_Size(fs->alias);
+      for (Py_ssize_t j = 0; j < n_alias; j++) {
+        PyObject *alias_key = PyList_GetItem(fs->alias, j);
+        if (!PyUnicode_Check(alias_key)) {
+          continue;
+        }
+        Py_ssize_t alias_len = 0;
+        const char *alias_c =
+            PyUnicode_AsUTF8AndSize(alias_key, &alias_len);
+        if (!alias_c) {
+          PyErr_Clear();
+          continue;
+        }
+        schema->name_index.emplace(
+            std::string(alias_c, static_cast<size_t>(alias_len)), i);
+      }
+    }
+  }
   PyObject *capsule = PyCapsule_New(
       static_cast<void *>(schema), "vldt.SchemaCache", [](PyObject *capsule) {
         auto schema = static_cast<SchemaCache *>(

@@ -481,12 +481,11 @@ PyObject *validate_and_convert_from_json(const rapidjson::Value &val,
 /**
  * @brief Build a per-field array of pointers into the JSON object.
  *
- * Iterates the JSON members once and matches each to a FieldSchema (by
- * canonical name first, then by aliases), filling member_out[i] with a
- * pointer to the rapidjson value for field i, or nullptr if the field was
- * not present. Already-matched fields are skipped, so in the common case
- * where JSON keys appear in schema order the inner scan amortizes to O(1)
- * per JSON member.
+ * Walks the JSON object once and uses SchemaCache::name_index (a hashmap
+ * keyed by canonical name plus all aliases) to dispatch each member to
+ * its target field index. The hashmap is built once at schema compile
+ * time, so this routine is O(M) per record where M is the number of
+ * JSON members, regardless of model width.
  *
  * @param json_obj   The rapidjson object to walk.
  * @param schema     The compiled schema for the model.
@@ -503,55 +502,16 @@ build_member_lookup(const rapidjson::Value &json_obj, SchemaCache *schema,
   for (auto itr = json_obj.MemberBegin(); itr != json_obj.MemberEnd(); ++itr) {
     const char *key_c = itr->name.GetString();
     rapidjson::SizeType key_len = itr->name.GetStringLength();
-    bool matched = false;
-    for (Py_ssize_t i = 0; i < n; i++) {
-      if (member_out[i] != nullptr) {
-        continue;
-      }
-      FieldSchema *fs = &schema->fields[i];
-      if (static_cast<rapidjson::SizeType>(fs->field_name_len) == key_len &&
-          std::memcmp(fs->field_name_c, key_c, key_len) == 0) {
-        member_out[i] = &itr->value;
-        matched = true;
-        break;
-      }
-    }
-    if (matched) {
+    auto it = schema->name_index.find(
+        std::string_view(key_c, static_cast<size_t>(key_len)));
+    if (it == schema->name_index.end()) {
       continue;
     }
-    // Canonical names did not match. Try aliases.
-    for (Py_ssize_t i = 0; i < n; i++) {
-      if (member_out[i] != nullptr) {
-        continue;
-      }
-      FieldSchema *fs = &schema->fields[i];
-      if (!fs->alias || !PyList_Check(fs->alias)) {
-        continue;
-      }
-      Py_ssize_t n_alias = PyList_Size(fs->alias);
-      bool aliased = false;
-      for (Py_ssize_t j = 0; j < n_alias; j++) {
-        PyObject *alias_key = PyList_GetItem(fs->alias, j);
-        if (!PyUnicode_Check(alias_key)) {
-          continue;
-        }
-        Py_ssize_t alias_len = 0;
-        const char *alias_c =
-            PyUnicode_AsUTF8AndSize(alias_key, &alias_len);
-        if (!alias_c) {
-          PyErr_Clear();
-          continue;
-        }
-        if (static_cast<rapidjson::SizeType>(alias_len) == key_len &&
-            std::memcmp(alias_c, key_c, key_len) == 0) {
-          member_out[i] = &itr->value;
-          aliased = true;
-          break;
-        }
-      }
-      if (aliased) {
-        break;
-      }
+    Py_ssize_t idx = it->second;
+    // First write wins: if both the canonical name and an alias appear in
+    // the JSON object, keep the value found first.
+    if (member_out[idx] == nullptr) {
+      member_out[idx] = &itr->value;
     }
   }
 }

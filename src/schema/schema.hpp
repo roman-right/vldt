@@ -4,6 +4,42 @@
 #include <Python.h>
 
 #ifdef __cplusplus
+#include <string>
+#include <string_view>
+#include <unordered_map>
+
+/**
+ * @brief Transparent hasher / equality for the SchemaCache name index.
+ *
+ * Allows std::unordered_map::find to be called with std::string_view (or a
+ * raw const char*) without constructing a temporary std::string per call.
+ */
+struct SchemaNameHash {
+  using is_transparent = void;
+  std::size_t operator()(std::string_view sv) const noexcept {
+    return std::hash<std::string_view>{}(sv);
+  }
+  std::size_t operator()(const std::string &s) const noexcept {
+    return std::hash<std::string_view>{}(std::string_view(s));
+  }
+};
+
+struct SchemaNameEq {
+  using is_transparent = void;
+  bool operator()(std::string_view a, std::string_view b) const noexcept {
+    return a == b;
+  }
+  bool operator()(const std::string &a, std::string_view b) const noexcept {
+    return std::string_view(a) == b;
+  }
+  bool operator()(std::string_view a, const std::string &b) const noexcept {
+    return a == std::string_view(b);
+  }
+  bool operator()(const std::string &a, const std::string &b) const noexcept {
+    return a == b;
+  }
+};
+
 extern "C" {
 #endif
 
@@ -112,6 +148,14 @@ struct SchemaCache {
   int has_model_before;
   int has_model_after;
   Deserializers *deserializers;
+#ifdef __cplusplus
+  // Map from canonical field name and any alias to the field index in
+  // `fields`. Built once at schema compile time so JSON walks can resolve
+  // a member name in O(1) with heterogeneous lookup (no per-call
+  // std::string allocation).
+  std::unordered_map<std::string, Py_ssize_t, SchemaNameHash, SchemaNameEq>
+      name_index;
+#endif
 };
 
 /**
