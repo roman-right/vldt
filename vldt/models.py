@@ -1,5 +1,6 @@
 import inspect
 import sys
+import warnings
 from typing import ClassVar, Union, get_type_hints, get_origin, get_args
 
 from vldt._vldt import DataModel as _DataModel
@@ -104,6 +105,31 @@ class DataModelMeta(type):
         cls.__vldt_has_field_after_validators__ = bool(field_validators_after)
         cls.__vldt_has_model_before_validators__ = bool(model_validators_before)
         cls.__vldt_has_model_after_validators__ = bool(model_validators_after)
+
+        # Warn when async validators are declared on a sync DataModel: they
+        # are collected by AsyncDataModelMeta only, and would never run.
+        # The metaclass name check distinguishes plain DataModel subclasses
+        # from AsyncDataModel subclasses without forcing a forward import.
+        if type(cls).__name__ != "AsyncDataModelMeta":
+            for attr_name, attr_value in cls.__dict__.items():
+                func = (
+                    attr_value.__func__
+                    if isinstance(attr_value, (classmethod, staticmethod))
+                    else attr_value
+                )
+                has_async_marker = (
+                    hasattr(func, "__vldt_async_field_validator__")
+                    or hasattr(func, "__vldt_async_model_validator__")
+                )
+                if has_async_marker:
+                    warnings.warn(
+                        f"{cls.__name__}.{attr_name} is an async validator on "
+                        f"a sync DataModel and will not run. Inherit from "
+                        f"AsyncDataModel instead.",
+                        UserWarning,
+                        stacklevel=2,
+                    )
+
         super().__init__(name, bases, namespace)
 
 

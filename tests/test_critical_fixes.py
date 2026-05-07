@@ -573,3 +573,66 @@ class TestIssue27ForwardRefSwallowed:
             class Bad(DataModel):
                 xs: List["NopeNope"]
         assert "Bad" in str(exc.value)
+
+
+class TestIssue25AsyncValidatorOnSyncModel:
+    """Issue #25: async validators on a sync DataModel are collected but
+    never run. The user typically meant AsyncDataModel; warn at class
+    definition so the mistake is obvious.
+    """
+
+    def test_async_field_validator_on_sync_model_warns(self):
+        from vldt import async_field_validator, ValidatorMode
+
+        with pytest.warns(UserWarning, match="async validator"):
+            class M(DataModel):
+                x: int
+
+                @async_field_validator(mode=ValidatorMode.BEFORE)
+                @classmethod
+                async def coerce(cls, x):
+                    return x
+
+    def test_async_model_validator_on_sync_model_warns(self):
+        from vldt import async_model_validator, ValidatorMode
+
+        with pytest.warns(UserWarning, match="async validator"):
+            class M(DataModel):
+                x: int
+
+                @async_model_validator(mode=ValidatorMode.BEFORE)
+                @classmethod
+                async def adjust(cls, data):
+                    return data
+
+    def test_warning_names_class_and_attribute(self):
+        from vldt import async_field_validator, ValidatorMode
+
+        with pytest.warns(UserWarning) as record:
+            class MyModel(DataModel):
+                x: int
+
+                @async_field_validator(mode=ValidatorMode.BEFORE)
+                @classmethod
+                async def coerce(cls, x):
+                    return x
+
+        msgs = [str(w.message) for w in record]
+        joined = " | ".join(msgs)
+        assert "MyModel" in joined
+        assert "coerce" in joined
+
+    def test_async_validator_on_async_model_does_not_warn(self):
+        """Async validators on AsyncDataModel are correct; no warning."""
+        import warnings as _w
+        from vldt import AsyncDataModel, async_field_validator, ValidatorMode
+
+        with _w.catch_warnings():
+            _w.simplefilter("error")  # any warning becomes an error
+            class A(AsyncDataModel):
+                x: int
+
+                @async_field_validator(mode=ValidatorMode.BEFORE)
+                @classmethod
+                async def coerce(cls, x):
+                    return x
