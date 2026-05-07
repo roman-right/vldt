@@ -451,3 +451,86 @@ class TestIssue14BoolIntAsymmetry:
         # bool is still rejected.
         with pytest.raises(TypeError):
             M(x=True)
+
+
+class TestIssue15VariadicTuple:
+    """Issue #15: Tuple[T, ...] (variadic) was treated as a fixed-length 2-tuple
+    where the second slot expected Ellipsis. Detect the Ellipsis sentinel
+    during schema compilation and accept any length, validating each element
+    against the single inner type.
+    """
+
+    def test_variadic_tuple_accepts_any_length(self):
+        from typing import Tuple
+
+        class M(DataModel):
+            xs: Tuple[int, ...]
+
+        assert M(xs=()).xs == ()
+        assert M(xs=(1,)).xs == (1,)
+        assert M(xs=(1, 2, 3)).xs == (1, 2, 3)
+        assert M(xs=(1, 2, 3, 4, 5)).xs == (1, 2, 3, 4, 5)
+
+    def test_variadic_tuple_validates_each_element(self):
+        from typing import Tuple
+
+        class M(DataModel):
+            xs: Tuple[int, ...]
+
+        with pytest.raises(TypeError):
+            M(xs=(1, "not an int", 3))
+
+    def test_variadic_tuple_via_from_dict(self):
+        from typing import Tuple
+
+        class M(DataModel):
+            xs: Tuple[str, ...]
+
+        obj = M.from_dict({"xs": ("a", "b", "c")})
+        assert obj.xs == ("a", "b", "c")
+
+    def test_variadic_tuple_via_from_json(self):
+        from typing import Tuple
+
+        class M(DataModel):
+            xs: Tuple[float, ...]
+
+        obj = M.from_json('{"xs": [1.5, 2.5, 3.5]}')
+        assert obj.xs == (1.5, 2.5, 3.5)
+
+    def test_fixed_tuple_still_works(self):
+        """Make sure regular Tuple[T1, T2] still requires the right length."""
+        from typing import Tuple
+
+        class M(DataModel):
+            t: Tuple[int, str]
+
+        assert M(t=(1, "x")).t == (1, "x")
+        with pytest.raises(TypeError, match="Expected tuple of length 2"):
+            M(t=(1, "x", 5))
+        with pytest.raises(TypeError):
+            M(t=(1,))
+
+    def test_variadic_tuple_of_models(self):
+        from typing import Tuple
+
+        class Item(DataModel):
+            name: str
+
+        class M(DataModel):
+            items: Tuple[Item, ...]
+
+        # JSON arrays become tuples through the variadic path.
+        obj = M.from_json('{"items": [{"name": "a"}, {"name": "b"}]}')
+        assert len(obj.items) == 2
+        assert obj.items[0].name == "a"
+        assert obj.items[1].name == "b"
+
+    def test_variadic_tuple_empty(self):
+        from typing import Tuple
+
+        class M(DataModel):
+            xs: Tuple[int, ...]
+
+        obj = M.from_json('{"xs": []}')
+        assert obj.xs == ()

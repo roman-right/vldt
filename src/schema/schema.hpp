@@ -107,6 +107,9 @@ struct TypeSchema {
   int cached;
   int container_kind;
   int primitive_kind;
+  // Tuple[T, ...] is "variadic": any length, every element of type T.
+  // When set, num_args == 1 and args[0] is the element schema.
+  int is_variadic_tuple;
   PyObject *inner_model_type;
 };
 

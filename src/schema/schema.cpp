@@ -236,7 +236,17 @@ void handle_container_kind(TypeSchema *ts) {
     } else if (PyObject_RichCompareBool(ts->origin, (PyObject *)&PyTuple_Type,
                                         Py_EQ) == 1) {
       ts->container_kind = CK_TUPLE;
-      if (ts->num_args == 1) {
+      // Detect Tuple[T, ...] (variadic). The Python typing module compiles
+      // this as Tuple[T, Ellipsis], so the second arg's expected_type is
+      // the Ellipsis singleton. Collapse it to a single-arg variadic schema.
+      if (ts->num_args == 2 && ts->args[1] != nullptr &&
+          ts->args[1]->expected_type == Py_Ellipsis) {
+        ts->is_variadic_tuple = 1;
+        free_type_schema(ts->args[1]);
+        ts->args[1] = nullptr;
+        ts->num_args = 1;
+      }
+      if (ts->num_args == 1 && ts->args[0] != nullptr) {
         if (PyType_Check(ts->args[0]->expected_type) &&
             PyObject_IsSubclass(ts->args[0]->expected_type,
                                 (PyObject *)&DataModelType) == 1) {
@@ -289,6 +299,7 @@ TypeSchema *compile_type_schema(PyObject *expected_type) {
   ts->is_data_model = 0;
   ts->container_kind = CK_NONE;
   ts->primitive_kind = PK_NONE;
+  ts->is_variadic_tuple = 0;
   ts->inner_model_type = nullptr;
   if (PyType_Check(expected_type)) {
     int is_sub = PyObject_IsSubclass(expected_type, (PyObject *)&DataModelType);

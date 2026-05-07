@@ -195,6 +195,27 @@ PyObject *validate_tuple(PyObject *value, TypeSchema *ts,
     return nullptr;
   }
   Py_ssize_t size = PyTuple_Size(value);
+  // Tuple[T, ...]: any length, every element of type T (args[0]).
+  if (ts->is_variadic_tuple) {
+    PyObject *new_tuple = PyTuple_New(size);
+    if (!new_tuple) {
+      return nullptr;
+    }
+    TypeSchema *element_ts = ts->args[0];
+    for (Py_ssize_t i = 0; i < size; i++) {
+      PyObject *item = PyTuple_GetItem(value, i);
+      std::array<char, 256> new_path;
+      snprintf(new_path.data(), new_path.size(), "%s.%zd", error_path, i);
+      PyObject *conv_item = validate_and_convert(
+          item, element_ts, collector, new_path.data(), deserializers);
+      if (!conv_item) {
+        Py_DECREF(new_tuple);
+        return nullptr;
+      }
+      PyTuple_SET_ITEM(new_tuple, i, conv_item);
+    }
+    return new_tuple;
+  }
   if (ts->num_args != size) {
     if (collector) {
       std::array<char, 128> buf;

@@ -239,6 +239,34 @@ static PyObject *validate_tuple_from_json(const rapidjson::Value &val,
     return nullptr;
   }
   rapidjson::SizeType size = val.Size();
+  // Variadic Tuple[T, ...]: any length, every element of args[0].
+  if (ts->is_variadic_tuple) {
+    PyObject *new_tuple = PyTuple_New(size);
+    if (!new_tuple) {
+      return nullptr;
+    }
+    TypeSchema *inner = ts->args[0];
+    size_t base_len = std::strlen(error_path);
+    std::array<char, 256> new_path;
+    for (rapidjson::SizeType i = 0; i < size; i++) {
+      PyObject *conv = nullptr;
+      if (inner->primitive_kind != PK_NONE) {
+        conv = primitive_leaf_from_json(val[i], inner);
+      }
+      if (!conv) {
+        build_indexed_path(new_path.data(), new_path.size(), error_path,
+                           base_len, i);
+        conv = validate_and_convert_from_json(val[i], inner, collector,
+                                              new_path.data(), deserializers);
+        if (!conv) {
+          Py_DECREF(new_tuple);
+          return nullptr;
+        }
+      }
+      PyTuple_SET_ITEM(new_tuple, i, conv);
+    }
+    return new_tuple;
+  }
   if (ts->num_args != static_cast<Py_ssize_t>(size)) {
     if (collector) {
       std::array<char, 128> buf;
