@@ -5,7 +5,7 @@ This file tracks the current work on repository issues and fixes.
 | Issue | Description | Status | Notes |
 |---|---|---|---|
 | #19 | `__copy__` should mirror `__deepcopy__` using `copy.copy` instead of `copy.deepcopy` | Done | Added `__copy__` and regression tests |
-| #20 | `from_dict` / `from_json` key validation must ensure keys are `str` / `PyUnicode` | Pending | Add key validation in dict/json loaders and tests |
+| #20 | `from_dict` / `from_json` key validation must ensure keys are `str` / `PyUnicode` | Done | Added `PyUnicode_Check` validation for mapping keys and regression tests |
 | #21 | Async/sync validator detection unification | Pending | Resolve `__func__` and async flag at decoration time |
 | #29 | Serializer MRO fallback | Pending | Walk `tp_mro` on serializer miss |
 | #30 | Deserializer MRO fallback | Pending | Walk `tp_mro` on deserializer miss |

@@ -23,3 +23,11 @@ PyObject *dict_utils_to_dict(PyObject *self, PyObject *unused);
  * @return PyObject* The new DataModel instance, or nullptr on error.
  */
 PyObject *dict_utils_from_dict(PyObject *cls, PyObject *args);
+
+/**
+ * @brief Validate that all keys in a dictionary are Unicode strings.
+ *
+ * @param dict_obj The Python dictionary to inspect.
+ * @return true if all keys are Unicode strings, false with an exception set otherwise.
+ */
+bool validate_dict_keys_are_unicode(PyObject *dict_obj);

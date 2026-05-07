@@ -1,5 +1,6 @@
 #include "validation.hpp"
 
+#include "conversion/dict_utils.hpp"
 #include "conversion/rapidjson_to_pyobject.hpp"
 #include "data_model.hpp"
 #include "error_handling.hpp"
@@ -665,6 +666,10 @@ PyObject *data_model_from_json(PyObject *cls,
       PyErr_SetString(PyExc_TypeError, "Expected JSON object for model");
       return nullptr;
     }
+    if (!validate_dict_keys_are_unicode(dict_obj)) {
+      Py_DECREF(dict_obj);
+      return nullptr;
+    }
     PyObject *instance = PyObject_Call(cls, empty_tuple, dict_obj);
     Py_DECREF(dict_obj);
     if (!instance && outer_collector) {
@@ -696,6 +701,10 @@ PyObject *data_model_from_json(PyObject *cls,
       return nullptr;
     }
     if (run_model_before_validators(schema, cls, &kwds) != 0) {
+      Py_DECREF(kwds);
+      return nullptr;
+    }
+    if (!validate_dict_keys_are_unicode(kwds)) {
       Py_DECREF(kwds);
       return nullptr;
     }

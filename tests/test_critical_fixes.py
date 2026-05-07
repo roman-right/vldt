@@ -127,6 +127,27 @@ class TestIssue19CopyMethod:
         assert original.a == [1, 2]
 
 
+class TestIssue20KeyValidation:
+    """Issue #20: from_dict/from_json must validate mapping keys are strings."""
+
+    def test_from_dict_rejects_non_string_keys(self):
+        class M(DataModel):
+            x: int
+
+        with pytest.raises(TypeError, match="Mapping keys must be strings"):
+            M.from_dict({1: 2})
+
+    def test_from_json_fallback_with_custom_init_validates_keys(self):
+        class M(DataModel):
+            x: int
+
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+
+        obj = M.from_json('{"x": 1}')
+        assert obj.x == 1
+
+
 class TestIssue3DeserializerLeak:
     """Issue #3: get_deserializer returned an INCREF'd object that callers
     never DECREF'd, leaking one ref per primitive validation call.

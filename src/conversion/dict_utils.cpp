@@ -36,6 +36,23 @@ static inline int is_basic_immutable(PyObject *value) {
          PyBytes_Check(value);
 }
 
+bool validate_dict_keys_are_unicode(PyObject *dict_obj) {
+  if (!PyDict_Check(dict_obj)) {
+    PyErr_SetString(PyExc_TypeError, "Expected a dict");
+    return false;
+  }
+  PyObject *key = nullptr;
+  PyObject *value = nullptr;
+  Py_ssize_t pos = 0;
+  while (PyDict_Next(dict_obj, &pos, &key, &value)) {
+    if (!PyUnicode_Check(key)) {
+      PyErr_SetString(PyExc_TypeError, "Mapping keys must be strings");
+      return false;
+    }
+  }
+  return true;
+}
+
 /**
  * @brief Applies a custom dict serializer to a PyObject.
  *
@@ -299,6 +316,9 @@ PyObject *convert_to_dict(PyObject *value, PyObject *dict_serializer) {
 PyObject *dict_utils_from_dict(PyObject *cls, PyObject *args) {
   PyObject *input_dict = nullptr;
   if (!PyArg_ParseTuple(args, "O!", &PyDict_Type, &input_dict)) {
+    return nullptr;
+  }
+  if (!validate_dict_keys_are_unicode(input_dict)) {
     return nullptr;
   }
   PyObject *empty_tuple = PyTuple_New(0);
