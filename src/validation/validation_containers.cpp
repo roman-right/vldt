@@ -321,6 +321,13 @@ PyObject *validate_union(PyObject *value, TypeSchema *ts,
   bool value_is_bool = PyBool_Check(value);
   for (Py_ssize_t i = 0; i < ts->num_args; i++) {
     TypeSchema *candidate = ts->args[i];
+    // typing.Literal candidates need value-equality, not isinstance, and
+    // typing.Literal isn't a real class so PyObject_IsInstance would
+    // error. Defer to the second pass which dispatches into
+    // validate_literal via validate_and_convert.
+    if (candidate->is_literal) {
+      continue;
+    }
     PyObject *check_type = (candidate->origin != Py_None)
                                ? candidate->origin
                                : candidate->expected_type;
@@ -329,7 +336,14 @@ PyObject *validate_union(PyObject *value, TypeSchema *ts,
     if (value_is_bool && check_type == IntType) {
       continue;
     }
-    if (PyObject_IsInstance(value, check_type)) {
+    int is_inst = PyObject_IsInstance(value, check_type);
+    if (is_inst < 0) {
+      // The candidate type cannot be tested with isinstance (e.g. a typing
+      // special form). Fall through to the slow path.
+      PyErr_Clear();
+      continue;
+    }
+    if (is_inst) {
       Py_INCREF(value);
       return value;
     }

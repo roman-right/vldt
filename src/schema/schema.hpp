@@ -110,6 +110,11 @@ struct TypeSchema {
   // Tuple[T, ...] is "variadic": any length, every element of type T.
   // When set, num_args == 1 and args[0] is the element schema.
   int is_variadic_tuple;
+  // typing.Literal[v1, v2, ...]: when set, args is unused and the schema
+  // matches a value if it equals one of the entries in literal_values.
+  // literal_values is a strong reference to a Python tuple of values.
+  int is_literal;
+  PyObject *literal_values;
   PyObject *inner_model_type;
 };
 

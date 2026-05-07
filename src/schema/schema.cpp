@@ -9,6 +9,7 @@
 #include "schema/schema.hpp"
 
 extern PyObject *UnionType;
+extern PyObject *LiteralType;
 extern PyObject *ClassVarType;
 extern PyObject *TupleType;
 extern PyObject *SetType;
@@ -300,6 +301,8 @@ TypeSchema *compile_type_schema(PyObject *expected_type) {
   ts->container_kind = CK_NONE;
   ts->primitive_kind = PK_NONE;
   ts->is_variadic_tuple = 0;
+  ts->is_literal = 0;
+  ts->literal_values = nullptr;
   ts->inner_model_type = nullptr;
   if (PyType_Check(expected_type)) {
     int is_sub = PyObject_IsSubclass(expected_type, (PyObject *)&DataModelType);
@@ -328,6 +331,29 @@ TypeSchema *compile_type_schema(PyObject *expected_type) {
     return handle_no_origin(ts, expected_type);
   }
   ts->origin = origin;
+  // typing.Literal[...] needs special handling: __args__ holds VALUES,
+  // not types, so we must not recursively compile_args them. Store the
+  // tuple as-is for membership comparison at validation time and short
+  // circuit the rest of the generic-type compilation.
+  if (LiteralType && origin == LiteralType) {
+    PyObject *lit_args = PyObject_GetAttrString(expected_type, "__args__");
+    if (!lit_args || !PyTuple_Check(lit_args)) {
+      Py_XDECREF(lit_args);
+      return handle_no_args(ts, expected_type);
+    }
+    ts->is_literal = 1;
+    ts->literal_values = lit_args; // strong ref, freed in free_type_schema
+    ts->num_args = 0;
+    ts->args = nullptr;
+    ts->repr = PyObject_Repr(expected_type);
+    if (!ts->repr) {
+      ts->repr = Py_None;
+      Py_INCREF(Py_None);
+    }
+    ts->utf8_repr = PyUnicode_AsUTF8(ts->repr);
+    try_cache_type_schema(expected_type, ts);
+    return ts;
+  }
   normalize_origin(ts);
   PyObject *args = PyObject_GetAttrString(expected_type, "__args__");
   if (!args || !PyTuple_Check(args)) {
@@ -372,6 +398,7 @@ void free_type_schema(TypeSchema *ts) {
   Py_XDECREF(ts->origin);
   Py_XDECREF(ts->repr);
   Py_XDECREF(ts->inner_model_type);
+  Py_XDECREF(ts->literal_values);
   if (ts->args) {
     for (Py_ssize_t i = 0; i < ts->num_args; i++) {
       free_type_schema(ts->args[i]);

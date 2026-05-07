@@ -767,3 +767,95 @@ class TestIssue18DeepcopyValidates:
         c = M(x=2, y=5)
         d = copy.deepcopy(c)
         assert d.y == 5
+
+
+class TestIssue16Literal:
+    """Issue #16 (Literal subset): typing.Literal[...] was not supported.
+    The schema treated each literal value as a recursive type and failed
+    to compile or rejected valid inputs.
+
+    Now Literal["a", "b", 1] is a first-class schema kind: validation
+    accepts a value if it equals any of the listed literal values.
+    """
+
+    def test_literal_str_accepts_listed(self):
+        from typing import Literal
+
+        class M(DataModel):
+            color: Literal["red", "green", "blue"]
+
+        assert M(color="red").color == "red"
+        assert M(color="blue").color == "blue"
+
+    def test_literal_str_rejects_unlisted(self):
+        from typing import Literal
+
+        class M(DataModel):
+            color: Literal["red", "green"]
+
+        with pytest.raises(TypeError):
+            M(color="purple")
+
+    def test_literal_mixed_types(self):
+        """Literal can mix str and int values."""
+        from typing import Literal
+
+        class M(DataModel):
+            v: Literal["x", 1, 2, True]
+
+        assert M(v="x").v == "x"
+        assert M(v=1).v == 1
+        assert M(v=2).v == 2
+        # True is a literal value here too.
+        assert M(v=True).v is True
+        with pytest.raises(TypeError):
+            M(v=3)
+        with pytest.raises(TypeError):
+            M(v="y")
+
+    def test_literal_via_from_json(self):
+        from typing import Literal
+
+        class M(DataModel):
+            level: Literal[1, 2, 3]
+
+        obj = M.from_json('{"level": 2}')
+        assert obj.level == 2
+
+        with pytest.raises(TypeError):
+            M.from_json('{"level": 99}')
+
+    def test_literal_in_optional(self):
+        from typing import Literal
+
+        class M(DataModel):
+            v: Optional[Literal["on", "off"]] = None
+
+        assert M().v is None
+        assert M(v="on").v == "on"
+        assert M(v="off").v == "off"
+        with pytest.raises(TypeError):
+            M(v="maybe")
+
+    def test_literal_in_list(self):
+        from typing import List, Literal
+
+        class M(DataModel):
+            states: List[Literal["a", "b"]]
+
+        obj = M(states=["a", "b", "a"])
+        assert obj.states == ["a", "b", "a"]
+        with pytest.raises(TypeError):
+            M(states=["a", "c"])
+
+    def test_literal_int_does_not_match_bool(self):
+        """Literal[1] rejects True even though bool is a subclass of int.
+        Mirrors the int-vs-bool stance from issue #14."""
+        from typing import Literal
+
+        class M(DataModel):
+            v: Literal[1, 2]
+
+        assert M(v=1).v == 1
+        with pytest.raises(TypeError):
+            M(v=True)

@@ -9,6 +9,7 @@ PyObject *empty_tuple = nullptr;
 PyObject *ClassVarType = nullptr;
 PyObject *AnyType = nullptr;
 PyObject *UnionType = nullptr;
+PyObject *LiteralType = nullptr;
 PyObject *generic_cache = nullptr;
 PyObject *TupleType = nullptr;
 PyObject *SetType = nullptr;
@@ -128,8 +129,13 @@ int ensure_union_type() {
       return -1;
     }
     UnionType = PyObject_GetAttrString(typing_module, "Union");
-    Py_DECREF(typing_module);
     if (!UnionType) {
+      Py_DECREF(typing_module);
+      return -1;
+    }
+    LiteralType = PyObject_GetAttrString(typing_module, "Literal");
+    Py_DECREF(typing_module);
+    if (!LiteralType) {
       return -1;
     }
   }

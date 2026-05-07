@@ -209,6 +209,55 @@ static PyObject *convert_using_constructor(PyObject *value, TypeSchema *ts,
  * @param deserializers Pointer to registered deserializers.
  * @return A new PyObject on success, or nullptr on error.
  */
+/**
+ * @brief Validate against typing.Literal[...].
+ *
+ * Returns the input value (with INCREF) when it equals one of the literal
+ * values by Python ==. As a small consistency rule with issue #14, an int
+ * literal does not match a bool input and vice versa even though
+ * bool == int is True in Python.
+ */
+static PyObject *validate_literal(PyObject *value, TypeSchema *ts,
+                                  ErrorCollector *collector,
+                                  const char *error_path) {
+  if (!ts->literal_values || !PyTuple_Check(ts->literal_values)) {
+    if (collector) {
+      collector->add_error(error_path, "Literal schema is malformed");
+    }
+    return nullptr;
+  }
+  bool value_is_bool = PyBool_Check(value);
+  Py_ssize_t n = PyTuple_GET_SIZE(ts->literal_values);
+  for (Py_ssize_t i = 0; i < n; i++) {
+    PyObject *cand = PyTuple_GET_ITEM(ts->literal_values, i);
+    bool cand_is_bool = PyBool_Check(cand);
+    // bool / int cross-match guard: keep the same stance as validate_plain.
+    if (value_is_bool != cand_is_bool) {
+      if ((value_is_bool && PyLong_Check(cand)) ||
+          (cand_is_bool && PyLong_Check(value))) {
+        continue;
+      }
+    }
+    int eq = PyObject_RichCompareBool(value, cand, Py_EQ);
+    if (eq < 0) {
+      return nullptr;
+    }
+    if (eq == 1) {
+      Py_INCREF(value);
+      return value;
+    }
+  }
+  if (collector) {
+    PyObject *repr = PyObject_Repr(ts->literal_values);
+    const char *repr_c = repr ? PyUnicode_AsUTF8(repr) : "()";
+    collector->add_error(error_path,
+                         std::string("Value not in Literal") +
+                             (repr_c ? repr_c : "()"));
+    Py_XDECREF(repr);
+  }
+  return nullptr;
+}
+
 PyObject *validate_and_convert(PyObject *value, TypeSchema *ts,
                                ErrorCollector *collector,
                                const char *error_path,
@@ -218,6 +267,10 @@ PyObject *validate_and_convert(PyObject *value, TypeSchema *ts,
       Py_INCREF(Py_None);
       return Py_None;
     }
+  }
+
+  if (ts->is_literal) {
+    return validate_literal(value, ts, collector, error_path);
   }
 
   if (ts->expected_type == AnyType) {

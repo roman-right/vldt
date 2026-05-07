@@ -463,6 +463,20 @@ PyObject *validate_and_convert_from_json(const rapidjson::Value &val,
     // materialized fallback below.
   }
 
+  // typing.Literal[...] needs value-equality against the literal tuple.
+  // Materialise the JSON leaf as a Python value and delegate to
+  // validate_and_convert which holds the Literal logic in one place.
+  if (ts->is_literal) {
+    PyObject *as_py = materialize(val);
+    if (!as_py) {
+      return nullptr;
+    }
+    PyObject *result =
+        validate_and_convert(as_py, ts, collector, error_path, deserializers);
+    Py_DECREF(as_py);
+    return result;
+  }
+
   // Primitive fast paths via the cached primitive_kind.
   if (ts->primitive_kind != PK_NONE) {
     PyObject *prim = primitive_leaf_from_json(val, ts);

@@ -13,6 +13,7 @@ extern PyObject *empty_tuple;
 extern PyObject *ClassVarType;
 extern PyObject *AnyType;
 extern PyObject *UnionType;
+extern PyObject *LiteralType;
 extern PyObject *generic_cache;
 extern PyObject *TupleType;
 extern PyObject *SetType;
