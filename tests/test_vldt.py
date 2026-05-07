@@ -716,6 +716,17 @@ class TestDataModelValidation:
         obj.name = "Updated"
         assert obj.name == "Updated"
 
+    def test_model_setattr_type_conversion(self):
+        """Test that __setattr__ uses the compiled field schema for conversion."""
+
+        class UpdateModel(DataModel):
+            id: int
+            name: str
+
+        obj = UpdateModel(id=1, name="Test")
+        obj.id = "42"
+        assert obj.id == 42
+
     def test_model_inheritance_with_additional_fields(self):
         """Test model inheritance with additional fields.
 

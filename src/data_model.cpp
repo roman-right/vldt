@@ -339,9 +339,24 @@ int DataModel_setattro(PyObject *self, PyObject *name, PyObject *value) {
 
   PyObject *annotations = schema->instance_annotations;
 
-  // Schema-declared field: validate and write into the indexed slot.
-  if (annotations && PyDict_Check(annotations) &&
-      PyDict_Contains(annotations, name)) {
+  auto it = schema->name_index.find(name_view);
+  TypeSchema *ts = nullptr;
+  Py_ssize_t idx = -1;
+  if (it != schema->name_index.end()) {
+    idx = it->second;
+    if (idx < 0 || idx >= schema->num_fields) {
+      PyErr_Format(PyExc_RuntimeError,
+                   "Invalid field index %zd for attribute %R", idx, name);
+      return -1;
+    }
+    ts = schema->fields[idx].type_schema;
+    if (!ts) {
+      PyErr_SetString(PyExc_RuntimeError,
+                      "Missing compiled field schema for attribute");
+      return -1;
+    }
+  } else if (annotations && PyDict_Check(annotations) &&
+             PyDict_Contains(annotations, name)) {
     PyObject *expected_type = PyDict_GetItemWithError(annotations, name);
     if (!expected_type) {
       return -1;
@@ -350,14 +365,19 @@ int DataModel_setattro(PyObject *self, PyObject *name, PyObject *value) {
       PyErr_SetString(PyExc_AttributeError, "Cannot set ClassVar attribute");
       return -1;
     }
-    TypeSchema *ts = compile_type_schema(expected_type);
+    ts = compile_type_schema(expected_type);
     if (!ts) {
       return -1;
     }
+  }
+
+  if (ts) {
     ErrorCollector collector;
     PyObject *converted = validate_and_convert(
         value, ts, &collector, attr_name, schema->deserializers);
-    free_type_schema(ts);
+    if (it == schema->name_index.end()) {
+      free_type_schema(ts);
+    }
     if (!converted) {
       if (collector.has_errors()) {
         std::string err_json = collector.to_json();
@@ -367,7 +387,6 @@ int DataModel_setattro(PyObject *self, PyObject *name, PyObject *value) {
       }
       return -1;
     }
-    auto it = schema->name_index.find(name_view);
     if (it == schema->name_index.end()) {
       // Annotation present but not in the index (shouldn't happen for normal
       // models, but stay defensive). Fall through to the extra map.
@@ -385,7 +404,6 @@ int DataModel_setattro(PyObject *self, PyObject *name, PyObject *value) {
       }
       return 0;
     }
-    Py_ssize_t idx = it->second;
     if (idx >= static_cast<Py_ssize_t>(data->fields.size())) {
       data->fields.resize(static_cast<size_t>(schema->num_fields), nullptr);
     }

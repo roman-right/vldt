@@ -7,9 +7,9 @@ This file tracks the current work on repository issues and fixes.
 | #19 | `__copy__` should mirror `__deepcopy__` using `copy.copy` instead of `copy.deepcopy` | Done | Added `__copy__` and regression tests |
 | #20 | `from_dict` / `from_json` key validation must ensure keys are `str` / `PyUnicode` | Done | Added `PyUnicode_Check` validation for mapping keys and regression tests |
 | #21 | Async/sync validator detection unification | Done | Resolved `__func__` and async/call-style flags at decoration time; both sync and async runners read metadata |
-| #29 | Serializer MRO fallback | Pending | Walk `tp_mro` on serializer miss |
-| #30 | Deserializer MRO fallback | Pending | Walk `tp_mro` on deserializer miss |
-| #31 | Recompiling `TypeSchema` on `__setattr__` | Pending | Use field compiled schema from `SchemaCache` |
+| #29 | Serializer MRO fallback | Done | Walked `tp_mro` on serializer miss for both `dict_serializer` and `json_serializer` |
+| #30 | Deserializer MRO fallback | Done | Walked `tp_mro` on deserializer miss for subclass sources |
+| #31 | Recompiling `TypeSchema` on `__setattr__` | Done | Reused cached field `TypeSchema` from `SchemaCache` instead of recompiling on every assignment |
 | #32 | `PyObject_RichCompareBool` for type identity | Pending | Use pointer comparison for type singletons |
 | #33 | `validate_plain` fast path | Pending | Add `Py_TYPE(value) == (PyTypeObject*)ts->expected_type` before `isinstance` |
 | #34 | Unused `is_dict_initialized` field | Pending | Remove dead field from `InstanceData` |
