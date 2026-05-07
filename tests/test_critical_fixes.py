@@ -983,3 +983,147 @@ class TestIssue16Enum:
         # JSON round-trip: serialize then re-parse.
         round_tripped = M.from_json(_json.dumps({"c": "red"}))
         assert round_tripped.c is Color.RED
+
+
+class TestIssue17DiscriminatedUnion:
+    """Issue #17: Union[A, B, C] of DataModels fell back to 'try each arm'
+    until one validates. With a common Literal-typed field across all arms
+    we can dispatch directly to the right model based on the discriminator
+    value, eliminating ambiguity and the cost of failed validation attempts.
+    """
+
+    def test_literal_discriminator_picks_right_model(self):
+        from typing import Literal, Union
+
+        class Cat(DataModel):
+            kind: Literal["cat"]
+            meow_volume: int
+
+        class Dog(DataModel):
+            kind: Literal["dog"]
+            bark_volume: int
+
+        class Owner(DataModel):
+            pet: Union[Cat, Dog]
+
+        c = Owner(pet={"kind": "cat", "meow_volume": 7})
+        assert isinstance(c.pet, Cat)
+        assert c.pet.meow_volume == 7
+
+        d = Owner(pet={"kind": "dog", "bark_volume": 3})
+        assert isinstance(d.pet, Dog)
+        assert d.pet.bark_volume == 3
+
+    def test_unknown_discriminator_value_raises_clearly(self):
+        from typing import Literal, Union
+
+        class A(DataModel):
+            t: Literal["a"]
+
+        class B(DataModel):
+            t: Literal["b"]
+
+        class W(DataModel):
+            x: Union[A, B]
+
+        with pytest.raises(TypeError) as exc:
+            W(x={"t": "c"})
+        # The error should mention the discriminator field or the value.
+        assert "t" in str(exc.value) or "discriminator" in str(exc.value).lower()
+
+    def test_missing_discriminator_field_raises(self):
+        from typing import Literal, Union
+
+        class A(DataModel):
+            t: Literal["a"]
+
+        class B(DataModel):
+            t: Literal["b"]
+
+        class W(DataModel):
+            x: Union[A, B]
+
+        with pytest.raises(TypeError):
+            W(x={})
+
+    def test_discriminated_union_via_json(self):
+        from typing import Literal, Union
+
+        class Img(DataModel):
+            kind: Literal["img"]
+            url: str
+
+        class Txt(DataModel):
+            kind: Literal["txt"]
+            body: str
+
+        class Doc(DataModel):
+            content: Union[Img, Txt]
+
+        a = Doc.from_json('{"content": {"kind": "img", "url": "/a.png"}}')
+        assert isinstance(a.content, Img)
+        assert a.content.url == "/a.png"
+
+        b = Doc.from_json('{"content": {"kind": "txt", "body": "hello"}}')
+        assert isinstance(b.content, Txt)
+        assert b.content.body == "hello"
+
+    def test_discriminator_overlap_falls_back(self):
+        """If two arms share a Literal value on the same field, no
+        unambiguous discriminator exists; the union falls back to the
+        try-each path."""
+        from typing import Literal, Union
+
+        class A(DataModel):
+            t: Literal["x", "y"]
+            a: int = 0
+
+        class B(DataModel):
+            t: Literal["y", "z"]
+            b: int = 0
+
+        class W(DataModel):
+            v: Union[A, B]
+
+        # 't' has overlapping values, so no discriminator. The first arm
+        # that validates wins (A here, since 'a' is optional).
+        obj = W(v={"t": "y"})
+        assert isinstance(obj.v, (A, B))
+
+    def test_non_literal_union_still_works(self):
+        """Plain Union without Literal arms keeps the existing behaviour."""
+        from typing import Union
+
+        class A(DataModel):
+            a: int
+
+        class B(DataModel):
+            b: str
+
+        class W(DataModel):
+            v: Union[A, B]
+
+        obj1 = W(v={"a": 1})
+        assert isinstance(obj1.v, A)
+        obj2 = W(v={"b": "x"})
+        assert isinstance(obj2.v, B)
+
+    def test_discriminator_with_int_literal(self):
+        """The discriminator value can be any literal type; here ints."""
+        from typing import Literal, Union
+
+        class V1(DataModel):
+            ver: Literal[1]
+            old_field: int
+
+        class V2(DataModel):
+            ver: Literal[2]
+            new_field: str
+
+        class M(DataModel):
+            payload: Union[V1, V2]
+
+        a = M.from_json('{"payload": {"ver": 1, "old_field": 5}}')
+        assert isinstance(a.payload, V1)
+        b = M.from_json('{"payload": {"ver": 2, "new_field": "hello"}}')
+        assert isinstance(b.payload, V2)
