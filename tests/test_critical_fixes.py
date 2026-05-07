@@ -636,3 +636,42 @@ class TestIssue25AsyncValidatorOnSyncModel:
                 @classmethod
                 async def coerce(cls, x):
                     return x
+
+
+class TestIssue13ReentrantDictIteration:
+    """Issue #13: schema compilation iterated the annotations dict via
+    PyDict_Next while calling PyObject_GetAttrString into user code (the
+    annotation type's __getattribute__). A descriptor that mutates the
+    annotations dict during that call would corrupt the C iteration. The
+    fix is defensive: snapshot annotation items into a stable list before
+    iterating in C.
+
+    The two tests here pin the basic contract:
+
+      - A model with many fields compiles and instantiates correctly. This
+        is a regression guard: once we replace PyDict_Next with a snapshot,
+        we need to be sure we still process all the right fields.
+      - Repeated construction of a freshly defined wide model under stress
+        (force re-compile) does not lose fields.
+    """
+
+    def test_wide_model_still_compiles_correctly(self):
+        """30 declared fields, all primitive, all required. Every field must
+        be present and validated."""
+        attrs = {f"f{i}": int for i in range(30)}
+        M = type("WideModel", (DataModel,), {"__annotations__": dict(attrs)})
+
+        kwargs = {f"f{i}": i for i in range(30)}
+        obj = M(**kwargs)
+        for i in range(30):
+            assert getattr(obj, f"f{i}") == i
+
+    def test_repeated_freshly_defined_models_compile(self):
+        """Defining and instantiating many models in a tight loop. If the
+        snapshot were broken, schema compilation could read stale state
+        between iterations."""
+        for n in range(50):
+            attrs = {"a": int, "b": int, "c": int}
+            cls = type(f"M{n}", (DataModel,), {"__annotations__": dict(attrs)})
+            obj = cls(a=1, b=2, c=3)
+            assert (obj.a, obj.b, obj.c) == (1, 2, 3)

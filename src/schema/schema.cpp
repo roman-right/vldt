@@ -384,14 +384,26 @@ void free_type_schema(TypeSchema *ts) {
 namespace {
 /**
  * @brief Counts the number of non-class variable annotations.
+ *
+ * Snapshots the items of `annotations` into a tuple before iterating. The
+ * loop body calls PyObject_GetAttrString on the annotation type, which can
+ * dispatch to user-defined __getattribute__ code; if that code mutated the
+ * source dict, a concurrent PyDict_Next would corrupt iteration. Iterating
+ * a stable tuple sidesteps the issue.
+ *
  * @param annotations The annotations dictionary.
- * @return The count of non-class variables.
+ * @return The count of non-class variables, or -1 on error.
  */
 Py_ssize_t count_non_class_vars(PyObject *annotations) {
+  PyObject *items = PyDict_Items(annotations);
+  if (!items) {
+    return -1;
+  }
   Py_ssize_t count = 0;
-  Py_ssize_t pos = 0;
-  PyObject *key, *expected_type;
-  while (PyDict_Next(annotations, &pos, &key, &expected_type)) {
+  Py_ssize_t n = PyList_GET_SIZE(items);
+  for (Py_ssize_t i = 0; i < n; i++) {
+    PyObject *pair = PyList_GET_ITEM(items, i);
+    PyObject *expected_type = PyTuple_GET_ITEM(pair, 1);
     int is_class_var = 0;
     PyObject *origin = PyObject_GetAttrString(expected_type, "__origin__");
     if (origin) {
@@ -406,6 +418,7 @@ Py_ssize_t count_non_class_vars(PyObject *annotations) {
       count++;
     }
   }
+  Py_DECREF(items);
   return count;
 }
 
@@ -602,6 +615,10 @@ PyObject *compile_schema(PyObject *cls) {
     return nullptr;
   }
   Py_ssize_t count = count_non_class_vars(annotations);
+  if (count < 0) {
+    Py_DECREF(annotations);
+    return nullptr;
+  }
   auto schema = new (std::nothrow) SchemaCache{};
   if (!schema) {
     Py_DECREF(annotations);
@@ -609,16 +626,31 @@ PyObject *compile_schema(PyObject *cls) {
     return nullptr;
   }
   schema->num_fields = count;
-  schema->fields = new (std::nothrow) FieldSchema[count];
-  if (!schema->fields) {
+  schema->fields = (count > 0) ? new (std::nothrow) FieldSchema[count] : nullptr;
+  if (count > 0 && !schema->fields) {
     delete schema;
     Py_DECREF(annotations);
     PyErr_NoMemory();
     return nullptr;
   }
-  Py_ssize_t pos = 0, idx = 0;
-  PyObject *key, *expected_type;
-  while (PyDict_Next(annotations, &pos, &key, &expected_type)) {
+  // Snapshot the annotations into a stable tuple list before iterating.
+  // The body calls PyObject_GetAttrString on each annotation type, which
+  // can run user-defined __getattribute__ code; iterating the snapshot
+  // makes that callback safe even if the source dict were to be mutated
+  // (defensive correctness for issue #13).
+  PyObject *items = PyDict_Items(annotations);
+  Py_DECREF(annotations);
+  if (!items) {
+    delete[] schema->fields;
+    delete schema;
+    return nullptr;
+  }
+  Py_ssize_t n_items = PyList_GET_SIZE(items);
+  Py_ssize_t idx = 0;
+  for (Py_ssize_t i = 0; i < n_items; i++) {
+    PyObject *pair = PyList_GET_ITEM(items, i);
+    PyObject *key = PyTuple_GET_ITEM(pair, 0);
+    PyObject *expected_type = PyTuple_GET_ITEM(pair, 1);
     int is_class_var = 0;
     PyObject *origin = PyObject_GetAttrString(expected_type, "__origin__");
     if (origin) {
@@ -636,7 +668,7 @@ PyObject *compile_schema(PyObject *cls) {
     compile_field_schema(cls, key, expected_type, fs);
     idx++;
   }
-  Py_DECREF(annotations);
+  Py_DECREF(items);
   compile_config(cls, schema);
 
   // Directly retrieve __vldt_instance_annotations__; the Python metaclass is
