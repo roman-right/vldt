@@ -4,6 +4,7 @@ Each test corresponds to a numbered issue in the GitHub repo and serves as a
 regression guard against the bug being reintroduced.
 """
 
+import copy
 import gc
 import sys
 from typing import ClassVar, Optional
@@ -94,6 +95,36 @@ class TestIssue2SchemaCompilationCrash:
 
             obj = M(x={"a": [1, None, 3]})
             assert obj.x == {"a": [1, None, 3]}
+
+
+class TestIssue19CopyMethod:
+    """Issue #19: DataModel.__copy__ should mirror __deepcopy__ using copy.copy."""
+
+    def test_copy_uses_shallow_copy_semantics(self):
+        class M(DataModel):
+            a: list[int]
+            b: dict[str, int]
+
+        original = M(a=[1, 2], b={"x": 1})
+        copied = copy.copy(original)
+
+        assert copied is not original
+        assert copied.a == original.a
+        assert copied.b == original.b
+        assert copied.a is not original.a
+        assert copied.b is not original.b
+
+    def test_copy_revalidates_shallow_values(self):
+        class M(DataModel):
+            a: list[int]
+
+        original = M(a=[1, 2])
+        copied = copy.copy(original)
+
+        # Shallow copy should preserve values but still create a distinct model
+        assert copied.a == [1, 2]
+        copied.a.append(3)
+        assert original.a == [1, 2]
 
 
 class TestIssue3DeserializerLeak:

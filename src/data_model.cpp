@@ -26,6 +26,7 @@ static PyObject *default_factory_str = nullptr;
 // copy.deepcopy resolved once at module init so __deepcopy__ can defer to
 // it for built-in containers (list/dict/set) without per-call import cost.
 static PyObject *CopyDeepcopyFunc = nullptr;
+static PyObject *CopyCopyFunc = nullptr;
 
 /**
  * @brief Initialize globals for DataModel.
@@ -64,8 +65,11 @@ int init_data_model_globals(void) {
     return -1;
   }
   CopyDeepcopyFunc = PyObject_GetAttrString(copy_module, "deepcopy");
+  CopyCopyFunc = PyObject_GetAttrString(copy_module, "copy");
   Py_DECREF(copy_module);
-  if (!CopyDeepcopyFunc) {
+  if (!CopyDeepcopyFunc || !CopyCopyFunc) {
+    Py_XDECREF(CopyDeepcopyFunc);
+    Py_XDECREF(CopyCopyFunc);
     return -1;
   }
 
@@ -420,6 +424,71 @@ static PyObject *deepcopy_one(PyObject *value, PyObject *memo) {
   return PyObject_CallFunctionObjArgs(CopyDeepcopyFunc, value, memo, nullptr);
 }
 
+static PyObject *shallowcopy_one(PyObject *value) {
+  // copy.copy produces a shallow copy for containers and user types.
+  return PyObject_CallFunctionObjArgs(CopyCopyFunc, value, nullptr);
+}
+
+static PyObject *DataModel_copy(PyObject *self, PyObject *Py_UNUSED(ignored)) {
+  PyTypeObject *type = Py_TYPE(self);
+  PyObject *new_obj = type->tp_alloc(type, 0);
+  if (!new_obj) {
+    return nullptr;
+  }
+
+  DataModelObject *src = (DataModelObject *)self;
+  DataModelObject *dst = (DataModelObject *)new_obj;
+  dst->instance_data = new InstanceData();
+  SchemaCache *schema =
+      static_cast<SchemaCache *>(src->instance_data->cached_schema);
+  dst->instance_data->cached_schema = schema;
+  dst->instance_data->dict_initialized = false;
+
+  ErrorCollector collector;
+  Py_ssize_t n_src = static_cast<Py_ssize_t>(src->instance_data->fields.size());
+  dst->instance_data->fields.resize(static_cast<size_t>(n_src), nullptr);
+  for (Py_ssize_t i = 0; i < n_src; i++) {
+    PyObject *v = src->instance_data->fields[i];
+    if (!v) {
+      continue;
+    }
+    PyObject *copied = shallowcopy_one(v);
+    if (!copied) {
+      Py_DECREF(new_obj);
+      return nullptr;
+    }
+    if (schema && i < schema->num_fields) {
+      FieldSchema *fs = &schema->fields[i];
+      PyObject *validated = validate_and_convert(
+          copied, fs->type_schema, &collector, fs->field_name_c,
+          schema->deserializers);
+      Py_DECREF(copied);
+      if (!validated) {
+        std::string err = collector.to_json();
+        PyErr_SetString(PyExc_TypeError, err.c_str());
+        Py_DECREF(new_obj);
+        return nullptr;
+      }
+      dst->instance_data->fields[i] = validated;
+    } else {
+      dst->instance_data->fields[i] = copied;
+    }
+  }
+
+  if (src->instance_data->extra_fields) {
+    dst->instance_data->extra_fields = std::make_unique<ExtraFieldsMap>();
+    for (const auto &p : *src->instance_data->extra_fields) {
+      PyObject *copied = shallowcopy_one(p.second);
+      if (!copied) {
+        Py_DECREF(new_obj);
+        return nullptr;
+      }
+      dst->instance_data->extra_fields->emplace(p.first, copied);
+    }
+  }
+  return new_obj;
+}
+
 static PyObject *DataModel_deepcopy(PyObject *self, PyObject *args) {
   PyObject *memo;
   if (!PyArg_ParseTuple(args, "O", &memo)) {
@@ -500,6 +569,8 @@ static PyMethodDef DataModel_methods[] = {
      "Create an instance from a JSON string."},
     {"to_json", (PyCFunction)json_utils_to_json, METH_NOARGS,
      "Convert the model instance to a JSON string."},
+    {"__copy__", (PyCFunction)DataModel_copy, METH_NOARGS,
+     "Shallow copy the model instance."},
     {"__deepcopy__", (PyCFunction)DataModel_deepcopy, METH_VARARGS,
      "Deep copy the model instance."},
     {nullptr, nullptr, 0, nullptr}};
