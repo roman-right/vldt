@@ -14,6 +14,7 @@
 #include <cstring>
 #include <rapidjson/document.h>
 #include <string>
+#include <vector>
 
 extern PyObject *empty_tuple;
 
@@ -478,39 +479,81 @@ PyObject *validate_and_convert_from_json(const rapidjson::Value &val,
 }
 
 /**
- * @brief Look up a field in a rapidjson object by canonical name then aliases.
+ * @brief Build a per-field array of pointers into the JSON object.
  *
- * Returns a pointer to the matching value (still owned by the rapidjson DOM)
- * or nullptr if neither the canonical name nor any alias is present.
+ * Iterates the JSON members once and matches each to a FieldSchema (by
+ * canonical name first, then by aliases), filling member_out[i] with a
+ * pointer to the rapidjson value for field i, or nullptr if the field was
+ * not present. Already-matched fields are skipped, so in the common case
+ * where JSON keys appear in schema order the inner scan amortizes to O(1)
+ * per JSON member.
+ *
+ * @param json_obj   The rapidjson object to walk.
+ * @param schema     The compiled schema for the model.
+ * @param member_out Caller-provided buffer of size schema->num_fields.
+ *                   Initialized to nullptr by this function.
  */
-static const rapidjson::Value *
-lookup_member_in_json(const rapidjson::Value &json_obj, FieldSchema *fs) {
-  if (fs->alias && PyList_Check(fs->alias)) {
-    Py_ssize_t n_alias = PyList_Size(fs->alias);
-    for (Py_ssize_t j = 0; j < n_alias; j++) {
-      PyObject *alias_key = PyList_GetItem(fs->alias, j);
-      if (!PyUnicode_Check(alias_key)) {
+static void
+build_member_lookup(const rapidjson::Value &json_obj, SchemaCache *schema,
+                    const rapidjson::Value **member_out) {
+  Py_ssize_t n = schema->num_fields;
+  for (Py_ssize_t i = 0; i < n; i++) {
+    member_out[i] = nullptr;
+  }
+  for (auto itr = json_obj.MemberBegin(); itr != json_obj.MemberEnd(); ++itr) {
+    const char *key_c = itr->name.GetString();
+    rapidjson::SizeType key_len = itr->name.GetStringLength();
+    bool matched = false;
+    for (Py_ssize_t i = 0; i < n; i++) {
+      if (member_out[i] != nullptr) {
         continue;
       }
-      Py_ssize_t alias_len = 0;
-      const char *alias_c = PyUnicode_AsUTF8AndSize(alias_key, &alias_len);
-      if (!alias_c) {
-        PyErr_Clear();
+      FieldSchema *fs = &schema->fields[i];
+      if (static_cast<rapidjson::SizeType>(fs->field_name_len) == key_len &&
+          std::memcmp(fs->field_name_c, key_c, key_len) == 0) {
+        member_out[i] = &itr->value;
+        matched = true;
+        break;
+      }
+    }
+    if (matched) {
+      continue;
+    }
+    // Canonical names did not match. Try aliases.
+    for (Py_ssize_t i = 0; i < n; i++) {
+      if (member_out[i] != nullptr) {
         continue;
       }
-      auto m = json_obj.FindMember(
-          rapidjson::Value(rapidjson::StringRef(alias_c, alias_len)));
-      if (m != json_obj.MemberEnd()) {
-        return &m->value;
+      FieldSchema *fs = &schema->fields[i];
+      if (!fs->alias || !PyList_Check(fs->alias)) {
+        continue;
+      }
+      Py_ssize_t n_alias = PyList_Size(fs->alias);
+      bool aliased = false;
+      for (Py_ssize_t j = 0; j < n_alias; j++) {
+        PyObject *alias_key = PyList_GetItem(fs->alias, j);
+        if (!PyUnicode_Check(alias_key)) {
+          continue;
+        }
+        Py_ssize_t alias_len = 0;
+        const char *alias_c =
+            PyUnicode_AsUTF8AndSize(alias_key, &alias_len);
+        if (!alias_c) {
+          PyErr_Clear();
+          continue;
+        }
+        if (static_cast<rapidjson::SizeType>(alias_len) == key_len &&
+            std::memcmp(alias_c, key_c, key_len) == 0) {
+          member_out[i] = &itr->value;
+          aliased = true;
+          break;
+        }
+      }
+      if (aliased) {
+        break;
       }
     }
   }
-  auto m = json_obj.FindMember(rapidjson::Value(rapidjson::StringRef(
-      fs->field_name_c, static_cast<rapidjson::SizeType>(fs->field_name_len))));
-  if (m != json_obj.MemberEnd()) {
-    return &m->value;
-  }
-  return nullptr;
 }
 
 /**
@@ -678,6 +721,24 @@ PyObject *data_model_from_json(PyObject *cls,
 
   ErrorCollector collector;
 
+  // Pre-compute a JSON member pointer per schema field in one pass over the
+  // JSON object. This replaces N rapidjson::FindMember calls (each O(M)) with
+  // a single walk that matches as it goes. Skipped when a model_before
+  // validator already produced the canonical kwargs dict.
+  constexpr size_t STACK_BUF = 64;
+  const rapidjson::Value *stack_members[STACK_BUF];
+  std::vector<const rapidjson::Value *> heap_members;
+  const rapidjson::Value **member_for_field = nullptr;
+  if (!kwds) {
+    if (schema->num_fields <= static_cast<Py_ssize_t>(STACK_BUF)) {
+      member_for_field = stack_members;
+    } else {
+      heap_members.assign(schema->num_fields, nullptr);
+      member_for_field = heap_members.data();
+    }
+    build_member_lookup(json_obj, schema, member_for_field);
+  }
+
   for (Py_ssize_t i = 0; i < schema->num_fields; i++) {
     FieldSchema *fs = &schema->fields[i];
 
@@ -717,8 +778,8 @@ PyObject *data_model_from_json(PyObject *cls,
                                        fs->field_name_c, schema->deserializers);
       Py_DECREF(value);
     } else {
-      // No model_before: look up directly in the rapidjson DOM.
-      const rapidjson::Value *member = lookup_member_in_json(json_obj, fs);
+      // No model_before: use the precomputed lookup.
+      const rapidjson::Value *member = member_for_field[i];
       if (!member) {
         PyObject *value = resolve_default(fs, &collector);
         if (!value) {
