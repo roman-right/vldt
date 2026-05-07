@@ -74,27 +74,26 @@ class DataModelMeta(type):
         model_validators_before = []
         model_validators_after = []
         for attr_name, attr_value in cls.__dict__.items():
-            candidate_funcs = []
-            if isinstance(attr_value, (classmethod, staticmethod)):
-                candidate_funcs.append(attr_value.__func__)
-            else:
-                candidate_funcs.append(attr_value)
-            for func in candidate_funcs:
-                if hasattr(func, "__vldt_field_validator__"):
-                    info = getattr(func, "__vldt_field_validator__")
-                    mode = info["mode"]
-                    field = info["field"]
-                    if mode == ValidatorMode.BEFORE:
-                        field_validators_before.setdefault(field, []).append(attr_value)
-                    elif mode == ValidatorMode.AFTER:
-                        field_validators_after.setdefault(field, []).append(attr_value)
-                if hasattr(func, "__vldt_model_validator__"):
-                    info = getattr(func, "__vldt_model_validator__")
-                    mode = info["mode"]
-                    if mode == ValidatorMode.BEFORE:
-                        model_validators_before.append(attr_value)
-                    elif mode == ValidatorMode.AFTER:
-                        model_validators_after.append(attr_value)
+            actual_func = (
+                attr_value.__func__
+                if isinstance(attr_value, (classmethod, staticmethod))
+                else attr_value
+            )
+            if hasattr(actual_func, "__vldt_field_validator__"):
+                info = getattr(actual_func, "__vldt_field_validator__")
+                mode = info["mode"]
+                field = info["field"]
+                if mode == ValidatorMode.BEFORE:
+                    field_validators_before.setdefault(field, []).append(actual_func)
+                elif mode == ValidatorMode.AFTER:
+                    field_validators_after.setdefault(field, []).append(actual_func)
+            if hasattr(actual_func, "__vldt_model_validator__"):
+                info = getattr(actual_func, "__vldt_model_validator__")
+                mode = info["mode"]
+                if mode == ValidatorMode.BEFORE:
+                    model_validators_before.append(actual_func)
+                elif mode == ValidatorMode.AFTER:
+                    model_validators_after.append(actual_func)
         cls.__vldt_validators__ = {
             "field_before": field_validators_before,
             "field_after": field_validators_after,
@@ -112,14 +111,14 @@ class DataModelMeta(type):
         # from AsyncDataModel subclasses without forcing a forward import.
         if type(cls).__name__ != "AsyncDataModelMeta":
             for attr_name, attr_value in cls.__dict__.items():
-                func = (
+                actual_func = (
                     attr_value.__func__
                     if isinstance(attr_value, (classmethod, staticmethod))
                     else attr_value
                 )
                 has_async_marker = (
-                    hasattr(func, "__vldt_async_field_validator__")
-                    or hasattr(func, "__vldt_async_model_validator__")
+                    hasattr(actual_func, "__vldt_async_field_validator__")
+                    or hasattr(actual_func, "__vldt_async_model_validator__")
                 )
                 if has_async_marker:
                     warnings.warn(
@@ -173,27 +172,26 @@ class AsyncDataModelMeta(DataModelMeta):
         async_model_before = []
         async_model_after = []
         for attr_name, attr_value in cls.__dict__.items():
-            candidate_funcs = []
-            if isinstance(attr_value, (classmethod, staticmethod)):
-                candidate_funcs.append(attr_value.__func__)
-            else:
-                candidate_funcs.append(attr_value)
-            for func in candidate_funcs:
-                if hasattr(func, "__vldt_async_field_validator__"):
-                    info = getattr(func, "__vldt_async_field_validator__")
-                    mode = info["mode"]
-                    field = info["field"]
-                    if mode == ValidatorMode.BEFORE:
-                        async_field_before.setdefault(field, []).append(attr_value)
-                    elif mode == ValidatorMode.AFTER:
-                        async_field_after.setdefault(field, []).append(attr_value)
-                if hasattr(func, "__vldt_async_model_validator__"):
-                    info = getattr(func, "__vldt_async_model_validator__")
-                    mode = info["mode"]
-                    if mode == ValidatorMode.BEFORE:
-                        async_model_before.append(attr_value)
-                    elif mode == ValidatorMode.AFTER:
-                        async_model_after.append(attr_value)
+            actual_func = (
+                attr_value.__func__
+                if isinstance(attr_value, (classmethod, staticmethod))
+                else attr_value
+            )
+            if hasattr(actual_func, "__vldt_async_field_validator__"):
+                info = getattr(actual_func, "__vldt_async_field_validator__")
+                mode = info["mode"]
+                field = info["field"]
+                if mode == ValidatorMode.BEFORE:
+                    async_field_before.setdefault(field, []).append(actual_func)
+                elif mode == ValidatorMode.AFTER:
+                    async_field_after.setdefault(field, []).append(actual_func)
+            if hasattr(actual_func, "__vldt_async_model_validator__"):
+                info = getattr(actual_func, "__vldt_async_model_validator__")
+                mode = info["mode"]
+                if mode == ValidatorMode.BEFORE:
+                    async_model_before.append(actual_func)
+                elif mode == ValidatorMode.AFTER:
+                    async_model_after.append(actual_func)
         cls.__async_validators__ = {
             "field_before": async_field_before,
             "field_after": async_field_after,
@@ -249,8 +247,9 @@ class AsyncDataModel(DataModel, metaclass=AsyncDataModelMeta):
             for validator in self.__class__.__async_validators__.get(
                 "model_before", []
             ):
-                if isinstance(validator, (classmethod, staticmethod)):
-                    result = await validator.__func__(self.__class__, kwargs)
+                meta = getattr(validator, "__vldt_async_model_validator__", {})
+                if meta.get("call_with_cls", True):
+                    result = await validator(self.__class__, kwargs)
                 else:
                     result = await validator(kwargs)
                 if isinstance(result, dict):
@@ -262,10 +261,7 @@ class AsyncDataModel(DataModel, metaclass=AsyncDataModelMeta):
                 if field in kwargs:
                     value = kwargs[field]
                     for validator in validators:
-                        if isinstance(validator, (classmethod, staticmethod)):
-                            value = await validator.__func__(self.__class__, value)
-                        else:
-                            value = await validator(value)
+                        value = await validator(self.__class__, value)
                     kwargs[field] = value
         return kwargs
 
@@ -281,17 +277,15 @@ class AsyncDataModel(DataModel, metaclass=AsyncDataModelMeta):
                 if hasattr(self, field):
                     value = getattr(self, field)
                     for validator in validators:
-                        if isinstance(validator, (classmethod, staticmethod)):
-                            value = await validator.__func__(self.__class__, value)
-                        else:
-                            value = await validator(value)
+                        value = await validator(self.__class__, value)
                     setattr(self, field, value)
         if getattr(self.__class__, "__vldt_has_async_model_after_validators__", False):
             for validator in self.__class__.__async_validators__.get("model_after", []):
-                if inspect.iscoroutinefunction(validator):
-                    await validator(self)
+                meta = getattr(validator, "__vldt_async_model_validator__", {})
+                if meta.get("call_with_cls", False):
+                    await validator(self.__class__, self)
                 else:
-                    await validator.__func__(self.__class__, self)
+                    await validator(self)
 
     async def _async_init(self):
         """Perform asynchronous initialization.

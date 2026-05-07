@@ -245,17 +245,27 @@ int run_model_after_validators(SchemaCache *schema, PyObject *cls,
       if (!callable_validator) {
         continue;
       }
-      int argcount = 0;
-      PyObject *code = PyObject_GetAttrString(validator, "__code__");
-      if (code) {
-        PyObject *argcount_obj = PyObject_GetAttrString(code, "co_argcount");
-        if (argcount_obj && PyLong_Check(argcount_obj)) {
-          argcount = static_cast<int>(PyLong_AsLong(argcount_obj));
+      int call_with_cls = 0;
+      PyObject *meta = PyObject_GetAttrString(validator, "__vldt_model_validator__");
+      if (meta && PyDict_Check(meta)) {
+        PyObject *call_with_cls_obj = PyDict_GetItemString(meta, "call_with_cls");
+        if (call_with_cls_obj && PyBool_Check(call_with_cls_obj)) {
+          call_with_cls = (call_with_cls_obj == Py_True);
         }
-        Py_XDECREF(argcount_obj);
-        Py_DECREF(code);
       }
-      if (argcount == 1) {
+      Py_XDECREF(meta);
+      if (!call_with_cls) {
+        PyObject *code = PyObject_GetAttrString(validator, "__code__");
+        if (code) {
+          PyObject *argcount_obj = PyObject_GetAttrString(code, "co_argcount");
+          if (argcount_obj && PyLong_Check(argcount_obj)) {
+            call_with_cls = (static_cast<int>(PyLong_AsLong(argcount_obj)) != 1);
+          }
+          Py_XDECREF(argcount_obj);
+          Py_DECREF(code);
+        }
+      }
+      if (!call_with_cls) {
         if (!PyObject_CallFunctionObjArgs(callable_validator, self, nullptr)) {
           Py_DECREF(callable_validator);
           return -1;

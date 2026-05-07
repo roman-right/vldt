@@ -293,6 +293,23 @@ class TestAsyncModelValidatorInstanceMethod:
 
 
 @pytest.mark.asyncio
+class TestAsyncClassMethodAfterValidator:
+    """Tests for async classmethod AFTER model validators."""
+
+    async def test_async_model_after_classmethod_runs(self):
+        class AsyncMethodModel(AsyncDataModel):
+            x: int
+
+            @async_model_validator(mode=ValidatorMode.AFTER)
+            @classmethod
+            async def bump(cls, self):
+                self.x += 1
+
+        obj = await AsyncMethodModel(x=1)
+        assert obj.x == 2
+
+
+@pytest.mark.asyncio
 class TestInvalidAsyncValidatorSignature:
     """Tests for models with invalid async validator signatures."""
 
@@ -303,3 +320,18 @@ class TestInvalidAsyncValidatorSignature:
             match="Async field validator must have exactly one field parameter",
         ):
             create_invalid_async_validator_model()
+
+    async def test_async_model_validator_rejects_sync_function(self):
+        """Test that decorating a sync function with async_model_validator fails."""
+
+        with pytest.raises(
+            ValueError,
+            match="Async validator must be an async function",
+        ):
+            class BrokenAsyncModel(AsyncDataModel):
+                x: int
+
+                @async_model_validator(mode=ValidatorMode.BEFORE)
+                @classmethod
+                def invalid(cls, data):
+                    return data

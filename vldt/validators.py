@@ -7,6 +7,23 @@ class ValidatorMode(Enum):
     AFTER = "after"
 
 
+def _unwrap_validator(fn):
+    return fn.__func__ if isinstance(fn, (classmethod, staticmethod)) else fn
+
+
+def _attach_validator_metadata(fn, meta, attr_name):
+    actual_func = _unwrap_validator(fn)
+    if inspect.iscoroutinefunction(actual_func) != meta["async"]:
+        if meta["async"]:
+            raise ValueError("Async validator must be an async function")
+        raise ValueError("Sync validator must not be an async function")
+    setattr(actual_func, attr_name, meta)
+    try:
+        setattr(fn, attr_name, meta)
+    except (AttributeError, TypeError):
+        pass
+
+
 def field_validator(*, mode: ValidatorMode):
     """Decorator for field validators.
 
@@ -22,8 +39,7 @@ def field_validator(*, mode: ValidatorMode):
     """
 
     def decorator(fn):
-        # Get the underlying function if wrapped as a classmethod/staticmethod.
-        actual_func = fn.__func__ if isinstance(fn, (classmethod, staticmethod)) else fn
+        actual_func = _unwrap_validator(fn)
         sig = inspect.signature(actual_func)
         params = list(sig.parameters.keys())
         # Expect exactly one parameter for the field value aside from the first parameter.
@@ -32,9 +48,13 @@ def field_validator(*, mode: ValidatorMode):
                 "Field validator must have exactly one field parameter (aside from 'cls' or 'self')"
             )
         field_name = params[1]
-        meta = {"mode": mode, "field": field_name}
-        setattr(actual_func, "__vldt_field_validator__", meta)
-        setattr(fn, "__vldt_field_validator__", meta)
+        meta = {
+            "mode": mode,
+            "field": field_name,
+            "async": False,
+            "call_with_cls": True,
+        }
+        _attach_validator_metadata(fn, meta, "__vldt_field_validator__")
         return fn
 
     return decorator
@@ -57,22 +77,30 @@ def model_validator(*, mode: ValidatorMode):
     """
 
     def decorator(fn):
-        actual_func = fn.__func__ if isinstance(fn, (classmethod, staticmethod)) else fn
+        actual_func = _unwrap_validator(fn)
         sig = inspect.signature(actual_func)
         params = list(sig.parameters.keys())
-        if isinstance(fn, (classmethod, staticmethod)):
+        if mode == ValidatorMode.BEFORE:
             if len(params) != 2:
                 raise ValueError(
-                    "Model validator (as a classmethod) must have exactly one parameter aside from 'cls'"
+                    "Model validator (BEFORE) must have exactly one parameter aside from 'cls'"
                 )
+            call_with_cls = True
         else:
-            if len(params) != 1:
-                raise ValueError(
-                    "Model validator (as an instance method) must have no parameter aside from 'self'"
-                )
-        meta = {"mode": mode}
-        setattr(actual_func, "__vldt_model_validator__", meta)
-        setattr(fn, "__vldt_model_validator__", meta)
+            if isinstance(fn, (classmethod, staticmethod)):
+                if len(params) != 2:
+                    raise ValueError(
+                        "Model validator (as a classmethod) must have exactly one parameter aside from 'cls'"
+                    )
+                call_with_cls = True
+            else:
+                if len(params) != 1:
+                    raise ValueError(
+                        "Model validator (as an instance method) must have no parameter aside from 'self'"
+                    )
+                call_with_cls = False
+        meta = {"mode": mode, "async": False, "call_with_cls": call_with_cls}
+        _attach_validator_metadata(fn, meta, "__vldt_model_validator__")
         return fn
 
     return decorator
@@ -93,7 +121,7 @@ def async_field_validator(*, mode: ValidatorMode):
     """
 
     def decorator(fn):
-        actual_func = fn.__func__ if isinstance(fn, (classmethod, staticmethod)) else fn
+        actual_func = _unwrap_validator(fn)
         sig = inspect.signature(actual_func)
         params = list(sig.parameters.keys())
         if len(params) != 2:
@@ -101,9 +129,13 @@ def async_field_validator(*, mode: ValidatorMode):
                 "Async field validator must have exactly one field parameter (aside from 'cls' or 'self')"
             )
         field_name = params[1]
-        meta = {"mode": mode, "field": field_name, "async": True}
-        setattr(actual_func, "__vldt_async_field_validator__", meta)
-        setattr(fn, "__vldt_async_field_validator__", meta)
+        meta = {
+            "mode": mode,
+            "field": field_name,
+            "async": True,
+            "call_with_cls": True,
+        }
+        _attach_validator_metadata(fn, meta, "__vldt_async_field_validator__")
         return fn
 
     return decorator
@@ -125,22 +157,30 @@ def async_model_validator(*, mode: ValidatorMode):
     """
 
     def decorator(fn):
-        actual_func = fn.__func__ if isinstance(fn, (classmethod, staticmethod)) else fn
+        actual_func = _unwrap_validator(fn)
         sig = inspect.signature(actual_func)
         params = list(sig.parameters.keys())
-        if isinstance(fn, (classmethod, staticmethod)):
+        if mode == ValidatorMode.BEFORE:
             if len(params) != 2:
                 raise ValueError(
-                    "Async model validator (as a classmethod) must have exactly one parameter aside from 'cls'"
+                    "Async model validator (BEFORE) must have exactly one parameter aside from 'cls'"
                 )
+            call_with_cls = True
         else:
-            if len(params) != 1:
-                raise ValueError(
-                    "Async model validator (as an instance method) must have no parameter aside from 'self'"
-                )
-        meta = {"mode": mode, "async": True}
-        setattr(actual_func, "__vldt_async_model_validator__", meta)
-        setattr(fn, "__vldt_async_model_validator__", meta)
+            if isinstance(fn, (classmethod, staticmethod)):
+                if len(params) != 2:
+                    raise ValueError(
+                        "Async model validator (as a classmethod) must have exactly one parameter aside from 'cls'"
+                    )
+                call_with_cls = True
+            else:
+                if len(params) != 1:
+                    raise ValueError(
+                        "Async model validator (as an instance method) must have no parameter aside from 'self'"
+                    )
+                call_with_cls = False
+        meta = {"mode": mode, "async": True, "call_with_cls": call_with_cls}
+        _attach_validator_metadata(fn, meta, "__vldt_async_model_validator__")
         return fn
 
     return decorator
