@@ -110,6 +110,11 @@ static PyObject *validate_plain(PyObject *value, TypeSchema *ts,
     }
     return nullptr;
   }
+  if (PyType_Check(ts->expected_type) &&
+      Py_TYPE(value) == reinterpret_cast<PyTypeObject *>(ts->expected_type)) {
+    Py_INCREF(value);
+    return value;
+  }
   if (PyObject_IsInstance(value, ts->expected_type)) {
     Py_INCREF(value);
     return value;
