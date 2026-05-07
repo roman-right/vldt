@@ -859,3 +859,127 @@ class TestIssue16Literal:
         assert M(v=1).v == 1
         with pytest.raises(TypeError):
             M(v=True)
+
+
+class TestIssue16Enum:
+    """Issue #16 (Enum subset): enum.Enum subclasses must be supported as
+    field types. Both the enum member and its underlying value should be
+    accepted; invalid values must raise.
+    """
+
+    def test_enum_member_accepted(self):
+        from enum import Enum
+
+        class Color(Enum):
+            RED = "red"
+            BLUE = "blue"
+
+        class M(DataModel):
+            c: Color
+
+        obj = M(c=Color.RED)
+        assert obj.c is Color.RED
+
+    def test_enum_value_coerces_to_member(self):
+        from enum import Enum
+
+        class Color(Enum):
+            RED = "red"
+            BLUE = "blue"
+
+        class M(DataModel):
+            c: Color
+
+        obj = M(c="red")
+        assert obj.c is Color.RED
+
+    def test_enum_invalid_value_raises(self):
+        from enum import Enum
+
+        class Color(Enum):
+            RED = "red"
+
+        class M(DataModel):
+            c: Color
+
+        with pytest.raises(TypeError):
+            M(c="purple")
+
+    def test_int_enum(self):
+        from enum import IntEnum
+
+        class Level(IntEnum):
+            LOW = 1
+            MID = 5
+            HIGH = 10
+
+        class M(DataModel):
+            level: Level
+
+        assert M(level=Level.MID).level is Level.MID
+        assert M(level=5).level is Level.MID
+        with pytest.raises(TypeError):
+            M(level=999)
+
+    def test_enum_via_from_json(self):
+        from enum import Enum
+
+        class Color(Enum):
+            RED = "red"
+            GREEN = "green"
+
+        class M(DataModel):
+            c: Color
+
+        obj = M.from_json('{"c": "green"}')
+        assert obj.c is Color.GREEN
+
+    def test_enum_in_list(self):
+        from enum import Enum
+        from typing import List
+
+        class Tag(Enum):
+            A = "a"
+            B = "b"
+
+        class M(DataModel):
+            tags: List[Tag]
+
+        obj = M.from_json('{"tags": ["a", "b", "a"]}')
+        assert obj.tags == [Tag.A, Tag.B, Tag.A]
+
+    def test_enum_in_optional(self):
+        from enum import Enum
+
+        class Mode(Enum):
+            ON = 1
+            OFF = 0
+
+        class M(DataModel):
+            mode: Optional[Mode] = None
+
+        assert M().mode is None
+        assert M(mode=Mode.ON).mode is Mode.ON
+        assert M(mode=1).mode is Mode.ON
+        with pytest.raises(TypeError):
+            M(mode=99)
+
+    def test_enum_round_trips_through_to_dict_and_to_json(self):
+        from enum import Enum
+        import json as _json
+
+        class Color(Enum):
+            RED = "red"
+
+        class M(DataModel):
+            c: Color
+
+        m = M(c=Color.RED)
+        # to_dict keeps the enum object; to_json must serialize as the value.
+        # Without an explicit serializer the to_dict result is the enum
+        # member; to_json serializes via __str__ (rapidjson string fallback).
+        d = m.to_dict()
+        assert d["c"] is Color.RED
+        # JSON round-trip: serialize then re-parse.
+        round_tripped = M.from_json(_json.dumps({"c": "red"}))
+        assert round_tripped.c is Color.RED
