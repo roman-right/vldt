@@ -124,19 +124,18 @@ TypeSchema *handle_no_origin(TypeSchema *ts, PyObject *expected_type) {
  */
 void normalize_origin(TypeSchema *ts) {
   if (ts->origin != Py_None) {
-    if (PyObject_RichCompareBool(ts->origin, TupleType, Py_EQ) == 1 ||
-        PyObject_RichCompareBool(ts->origin, (PyObject *)&PyTuple_Type,
-                                 Py_EQ) == 1) {
+    if (ts->origin == TupleType ||
+        ts->origin == (PyObject *)&PyTuple_Type) {
       Py_DECREF(ts->origin);
       ts->origin = (PyObject *)&PyTuple_Type;
       Py_INCREF(ts->origin);
-    } else if (PyObject_RichCompareBool(ts->origin, SetType, Py_EQ) == 1 ||
-               PyObject_RichCompareBool(ts->origin, (PyObject *)&PySet_Type,
-                                        Py_EQ) == 1) {
+    } else if (ts->origin == SetType ||
+               ts->origin == (PyObject *)&PySet_Type) {
       Py_DECREF(ts->origin);
       ts->origin = (PyObject *)&PySet_Type;
       Py_INCREF(ts->origin);
-    } else if (PyObject_RichCompareBool(ts->origin, DictType, Py_EQ) == 1) {
+    } else if (ts->origin == DictType ||
+               ts->origin == (PyObject *)&PyDict_Type) {
       Py_DECREF(ts->origin);
       ts->origin = (PyObject *)&PyDict_Type;
       Py_INCREF(ts->origin);
@@ -201,7 +200,7 @@ int compile_args(TypeSchema *ts, PyObject *args) {
  */
 void handle_container_kind(TypeSchema *ts) {
   if (ts->origin && ts->origin != Py_None) {
-    if (PyObject_RichCompareBool(ts->origin, UnionType, Py_EQ) == 1) {
+    if (ts->origin == UnionType) {
       ts->container_kind = CK_UNION;
       ts->is_optional = 0;
       for (Py_ssize_t i = 0; i < ts->num_args; i++) {
@@ -214,9 +213,7 @@ void handle_container_kind(TypeSchema *ts) {
           Py_INCREF(ts->inner_model_type);
         }
       }
-    } else if (PyObject_RichCompareBool(ts->origin, (PyObject *)&PyDict_Type,
-                                        Py_EQ) == 1 &&
-               ts->num_args == 2) {
+    } else if (ts->origin == (PyObject *)&PyDict_Type && ts->num_args == 2) {
       ts->container_kind = CK_DICT;
       if (PyType_Check(ts->args[1]->expected_type) &&
           PyObject_IsSubclass(ts->args[1]->expected_type,
@@ -224,9 +221,7 @@ void handle_container_kind(TypeSchema *ts) {
         ts->inner_model_type = ts->args[1]->expected_type;
         Py_INCREF(ts->inner_model_type);
       }
-    } else if (PyObject_RichCompareBool(ts->origin, (PyObject *)&PyList_Type,
-                                        Py_EQ) == 1 &&
-               ts->num_args == 1) {
+    } else if (ts->origin == (PyObject *)&PyList_Type && ts->num_args == 1) {
       ts->container_kind = CK_LIST;
       if (PyType_Check(ts->args[0]->expected_type) &&
           PyObject_IsSubclass(ts->args[0]->expected_type,
@@ -234,8 +229,7 @@ void handle_container_kind(TypeSchema *ts) {
         ts->inner_model_type = ts->args[0]->expected_type;
         Py_INCREF(ts->inner_model_type);
       }
-    } else if (PyObject_RichCompareBool(ts->origin, (PyObject *)&PyTuple_Type,
-                                        Py_EQ) == 1) {
+    } else if (ts->origin == (PyObject *)&PyTuple_Type) {
       ts->container_kind = CK_TUPLE;
       // Detect Tuple[T, ...] (variadic). The Python typing module compiles
       // this as Tuple[T, Ellipsis], so the second arg's expected_type is
@@ -255,8 +249,7 @@ void handle_container_kind(TypeSchema *ts) {
           Py_INCREF(ts->inner_model_type);
         }
       }
-    } else if (PyObject_RichCompareBool(ts->origin, (PyObject *)&PySet_Type,
-                                        Py_EQ) == 1) {
+    } else if (ts->origin == (PyObject *)&PySet_Type) {
       ts->container_kind = CK_SET;
       if (ts->num_args == 1) {
         if (PyType_Check(ts->args[0]->expected_type) &&

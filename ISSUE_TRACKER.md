@@ -10,7 +10,7 @@ This file tracks the current work on repository issues and fixes.
 | #29 | Serializer MRO fallback | Done | Walked `tp_mro` on serializer miss for both `dict_serializer` and `json_serializer` |
 | #30 | Deserializer MRO fallback | Done | Walked `tp_mro` on deserializer miss for subclass sources |
 | #31 | Recompiling `TypeSchema` on `__setattr__` | Done | Reused cached field `TypeSchema` from `SchemaCache` instead of recompiling on every assignment |
-| #32 | `PyObject_RichCompareBool` for type identity | Pending | Use pointer comparison for type singletons |
+| #32 | `PyObject_RichCompareBool` for type identity | Done | Replaced singleton origin comparisons with direct pointer identity checks |
 | #33 | `validate_plain` fast path | Pending | Add `Py_TYPE(value) == (PyTypeObject*)ts->expected_type` before `isinstance` |
 | #34 | Unused `is_dict_initialized` field | Pending | Remove dead field from `InstanceData` |
 | #35 | Error path truncation | Pending | Replace fixed 256-char buffer with `std::string` |
