@@ -842,6 +842,81 @@ PyObject *data_model_from_json(PyObject *cls,
     self->instance_data->fields[i] = new_value;
   }
 
+  // Apply the extra-fields policy. For the model_before path the source
+  // has already been merged into kwds (a Python dict); for the direct
+  // rapidjson path we walk the JSON members.
+  if (schema->extra_policy != EXTRA_IGNORE) {
+    auto handle_extra = [&](const char *key_c, Py_ssize_t key_len,
+                            PyObject *py_val_or_null,
+                            const rapidjson::Value *json_val_or_null) {
+      auto it = schema->name_index.find(
+          std::string_view(key_c, static_cast<size_t>(key_len)));
+      if (it != schema->name_index.end()) {
+        return true;
+      }
+      if (schema->extra_policy == EXTRA_FORBID) {
+        collector.add_error(key_c, "Unexpected field");
+      } else if (schema->extra_policy == EXTRA_ALLOW) {
+        PyObject *value = py_val_or_null;
+        if (!value && json_val_or_null) {
+          value = rapidjson_to_pyobject(*json_val_or_null);
+          if (!value) {
+            return false;
+          }
+        } else if (!value) {
+          return true;
+        } else {
+          Py_INCREF(value);
+        }
+        if (!self->instance_data->extra_fields) {
+          self->instance_data->extra_fields =
+              std::make_unique<ExtraFieldsMap>();
+        }
+        auto &m = *self->instance_data->extra_fields;
+        auto exi = m.find(
+            std::string_view(key_c, static_cast<size_t>(key_len)));
+        if (exi != m.end()) {
+          Py_XDECREF(exi->second);
+          exi->second = value;
+        } else {
+          m.emplace(std::string(key_c, static_cast<size_t>(key_len)), value);
+        }
+      }
+      return true;
+    };
+    if (kwds) {
+      PyObject *xkey;
+      PyObject *xvalue;
+      Py_ssize_t xpos = 0;
+      while (PyDict_Next(kwds, &xpos, &xkey, &xvalue)) {
+        if (!PyUnicode_Check(xkey)) {
+          continue;
+        }
+        Py_ssize_t klen = 0;
+        const char *kc = PyUnicode_AsUTF8AndSize(xkey, &klen);
+        if (!kc) {
+          PyErr_Clear();
+          continue;
+        }
+        if (!handle_extra(kc, klen, xvalue, nullptr)) {
+          Py_DECREF((PyObject *)self);
+          Py_XDECREF(kwds);
+          return nullptr;
+        }
+      }
+    } else {
+      for (auto itr = json_obj.MemberBegin(); itr != json_obj.MemberEnd();
+           ++itr) {
+        const char *kc = itr->name.GetString();
+        Py_ssize_t klen = static_cast<Py_ssize_t>(itr->name.GetStringLength());
+        if (!handle_extra(kc, klen, nullptr, &itr->value)) {
+          Py_DECREF((PyObject *)self);
+          return nullptr;
+        }
+      }
+    }
+  }
+
   Py_XDECREF(kwds);
 
   if (collector.has_errors()) {

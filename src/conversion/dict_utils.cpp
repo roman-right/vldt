@@ -295,6 +295,32 @@ static PyObject *convert_datamodel(PyObject *value) {
     }
     Py_DECREF(conv_value);
   }
+  // Serialize any extra fields captured under Config(extra="allow") so the
+  // round trip preserves them. They appear after declared fields.
+  if (bm->instance_data->extra_fields) {
+    for (auto &p : *bm->instance_data->extra_fields) {
+      PyObject *key = PyUnicode_FromStringAndSize(
+          p.first.data(), static_cast<Py_ssize_t>(p.first.size()));
+      if (!key) {
+        Py_DECREF(result_dict);
+        return nullptr;
+      }
+      PyObject *conv_value = convert_to_dict(p.second, dict_serializer);
+      if (!conv_value) {
+        Py_DECREF(key);
+        Py_DECREF(result_dict);
+        return nullptr;
+      }
+      if (PyDict_SetItem(result_dict, key, conv_value) != 0) {
+        Py_DECREF(key);
+        Py_DECREF(conv_value);
+        Py_DECREF(result_dict);
+        return nullptr;
+      }
+      Py_DECREF(key);
+      Py_DECREF(conv_value);
+    }
+  }
   return result_dict;
 }
 

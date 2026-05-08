@@ -1179,3 +1179,137 @@ class TestIssue17DiscriminatedUnion:
         assert isinstance(a.payload, V1)
         b = M.from_json('{"payload": {"ver": 2, "new_field": "hello"}}')
         assert isinstance(b.payload, V2)
+
+
+class TestIssue22ExtraFieldsPolicy:
+    """Issue #22: extra kwargs / extra JSON members were silently dropped.
+    Add Pydantic-style `Config(extra='ignore' | 'allow' | 'forbid')` so users
+    can opt into stricter or more permissive behaviour. Default stays
+    'ignore' for backward compatibility.
+    """
+
+    # -- ignore (default) --
+    def test_default_ignore_drops_extras(self):
+        from vldt import Config
+
+        class M(DataModel):
+            x: int
+
+        # Default config: extras silently dropped.
+        obj = M(x=1, junk="dropped")
+        assert obj.x == 1
+        # Not stored anywhere accessible.
+        with pytest.raises(AttributeError):
+            obj.junk
+
+    def test_explicit_ignore_drops_extras(self):
+        from vldt import Config
+
+        class M(DataModel):
+            x: int
+            __vldt_config__ = Config(extra="ignore")
+
+        obj = M(x=1, junk="dropped")
+        assert obj.x == 1
+
+    # -- forbid --
+    def test_forbid_raises_on_extra(self):
+        from vldt import Config
+
+        class M(DataModel):
+            x: int
+            __vldt_config__ = Config(extra="forbid")
+
+        with pytest.raises(TypeError) as exc:
+            M(x=1, junk=42)
+        assert "junk" in str(exc.value)
+
+    def test_forbid_allows_known_keys(self):
+        from vldt import Config
+
+        class M(DataModel):
+            x: int
+            y: int
+            __vldt_config__ = Config(extra="forbid")
+
+        obj = M(x=1, y=2)
+        assert obj.x == 1 and obj.y == 2
+
+    def test_forbid_alias_is_not_extra(self):
+        from vldt import Config
+
+        class M(DataModel):
+            actual: str = Field(alias="given")
+            __vldt_config__ = Config(extra="forbid")
+
+        # The alias is a known key and must not trigger forbid.
+        obj = M.from_dict({"given": "ok"})
+        assert obj.actual == "ok"
+
+    def test_forbid_via_from_json(self):
+        from vldt import Config
+
+        class M(DataModel):
+            x: int
+            __vldt_config__ = Config(extra="forbid")
+
+        with pytest.raises(TypeError) as exc:
+            M.from_json('{"x": 1, "junk": 99}')
+        assert "junk" in str(exc.value)
+
+    # -- allow --
+    def test_allow_keeps_extras_accessible(self):
+        from vldt import Config
+
+        class M(DataModel):
+            x: int
+            __vldt_config__ = Config(extra="allow")
+
+        obj = M(x=1, extra_a=42, extra_b="hello")
+        assert obj.x == 1
+        assert obj.extra_a == 42
+        assert obj.extra_b == "hello"
+
+    def test_allow_extras_serialized_in_to_dict(self):
+        from vldt import Config
+
+        class M(DataModel):
+            x: int
+            __vldt_config__ = Config(extra="allow")
+
+        obj = M(x=1, e="hello")
+        d = obj.to_dict()
+        assert d["x"] == 1
+        assert d["e"] == "hello"
+
+    def test_allow_extras_serialized_in_to_json(self):
+        import json as _json
+        from vldt import Config
+
+        class M(DataModel):
+            x: int
+            __vldt_config__ = Config(extra="allow")
+
+        obj = M(x=1, extra=42)
+        d = _json.loads(obj.to_json())
+        assert d["x"] == 1
+        assert d["extra"] == 42
+
+    def test_allow_via_from_json(self):
+        from vldt import Config
+
+        class M(DataModel):
+            x: int
+            __vldt_config__ = Config(extra="allow")
+
+        obj = M.from_json('{"x": 1, "y": 2, "name": "foo"}')
+        assert obj.x == 1
+        assert obj.y == 2
+        assert obj.name == "foo"
+
+    # -- validation --
+    def test_invalid_extra_value_rejected(self):
+        from vldt import Config
+
+        with pytest.raises(ValueError):
+            Config(extra="bogus")

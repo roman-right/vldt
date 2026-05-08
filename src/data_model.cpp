@@ -288,6 +288,48 @@ int DataModel_init(PyObject *self, PyObject *args, PyObject *kwds) {
     data->fields[i] = new_value;
   }
 
+  // Apply the extra-fields policy to any keyword arguments that did not
+  // match a declared field name or alias. The schema's name_index already
+  // contains both canonical names and all aliases.
+  if (schema->extra_policy != EXTRA_IGNORE && kwds && PyDict_Check(kwds)) {
+    PyObject *xkey;
+    PyObject *xvalue;
+    Py_ssize_t xpos = 0;
+    while (PyDict_Next(kwds, &xpos, &xkey, &xvalue)) {
+      if (!PyUnicode_Check(xkey)) {
+        continue;
+      }
+      Py_ssize_t key_len = 0;
+      const char *key_c = PyUnicode_AsUTF8AndSize(xkey, &key_len);
+      if (!key_c) {
+        PyErr_Clear();
+        continue;
+      }
+      auto it = schema->name_index.find(
+          std::string_view(key_c, static_cast<size_t>(key_len)));
+      if (it != schema->name_index.end()) {
+        continue;
+      }
+      if (schema->extra_policy == EXTRA_FORBID) {
+        collector.add_error(key_c, "Unexpected field");
+      } else if (schema->extra_policy == EXTRA_ALLOW) {
+        if (!data->extra_fields) {
+          data->extra_fields = std::make_unique<ExtraFieldsMap>();
+        }
+        Py_INCREF(xvalue);
+        auto &m = *data->extra_fields;
+        auto exi = m.find(
+            std::string_view(key_c, static_cast<size_t>(key_len)));
+        if (exi != m.end()) {
+          Py_XDECREF(exi->second);
+          exi->second = xvalue;
+        } else {
+          m.emplace(std::string(key_c, static_cast<size_t>(key_len)), xvalue);
+        }
+      }
+    }
+  }
+
   if (collector.has_errors()) {
     std::string err_json = collector.to_json();
     PyErr_SetString(PyExc_TypeError, err_json.c_str());

@@ -142,6 +142,14 @@ struct FieldSchema {
  * Contains an array of FieldSchema entries plus any configuration/validator
  * settings.
  */
+// Behaviour for keys passed to a model that are not declared in its schema
+// (and are not declared aliases either).
+enum ExtraPolicy {
+  EXTRA_IGNORE = 0, // silently drop (default, backward compatible)
+  EXTRA_ALLOW = 1,  // keep on instance via extra_fields and serialize out
+  EXTRA_FORBID = 2, // report a validation error naming the unknown keys
+};
+
 struct SchemaCache {
   FieldSchema *fields;
   Py_ssize_t num_fields;
@@ -155,6 +163,7 @@ struct SchemaCache {
   int has_field_after;
   int has_model_before;
   int has_model_after;
+  int extra_policy; // one of ExtraPolicy
   Deserializers *deserializers;
 #ifdef __cplusplus
   // Map from canonical field name and any alias to the field index in

@@ -578,6 +578,27 @@ void compile_config(PyObject *cls, SchemaCache *schema) {
       schema->deserializers = nullptr;
     }
     Py_XDECREF(deserializer_obj);
+    // Read the `extra` policy. Default to ignore if absent or unparsable
+    // so existing models keep their pre-policy behaviour.
+    schema->extra_policy = EXTRA_IGNORE;
+    PyObject *extra_obj = nullptr;
+    if (PyDict_Check(config)) {
+      extra_obj = PyDict_GetItemString(config, "extra");
+      Py_XINCREF(extra_obj);
+    } else {
+      extra_obj = PyObject_GetAttrString(config, "extra");
+      if (!extra_obj) {
+        PyErr_Clear();
+      }
+    }
+    if (extra_obj && PyUnicode_Check(extra_obj)) {
+      if (PyUnicode_CompareWithASCIIString(extra_obj, "forbid") == 0) {
+        schema->extra_policy = EXTRA_FORBID;
+      } else if (PyUnicode_CompareWithASCIIString(extra_obj, "allow") == 0) {
+        schema->extra_policy = EXTRA_ALLOW;
+      }
+    }
+    Py_XDECREF(extra_obj);
     schema->config = config;
   } else {
     schema->config = Py_None;
@@ -587,6 +608,7 @@ void compile_config(PyObject *cls, SchemaCache *schema) {
     schema->json_serializer = Py_None;
     Py_INCREF(Py_None);
     schema->deserializers = nullptr;
+    schema->extra_policy = EXTRA_IGNORE;
   }
 }
 

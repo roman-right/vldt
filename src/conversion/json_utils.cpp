@@ -90,6 +90,17 @@ write_json_value(PyObject *value, PyObject *json_serializer,
         return false;
       }
     }
+    // Emit Config(extra="allow") extras after declared fields so the
+    // JSON output round-trips with the model.
+    if (bm->instance_data->extra_fields) {
+      for (auto &p : *bm->instance_data->extra_fields) {
+        writer.Key(p.first.data(),
+                   static_cast<rapidjson::SizeType>(p.first.size()));
+        if (!write_json_value(p.second, json_serializer, writer)) {
+          return false;
+        }
+      }
+    }
     writer.EndObject();
     return true;
   } else if (PyList_Check(value)) {
