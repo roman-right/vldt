@@ -1,4 +1,5 @@
 #include "json_utils.hpp"
+#include "conversion/dict_utils.hpp"
 #include "conversion/rapidjson_to_pyobject.hpp"
 #include "data_model.hpp"
 #include "init_globals.hpp"
@@ -129,15 +130,19 @@ write_json_value(PyObject *value, PyObject *json_serializer,
   } else {
     if (json_serializer && PyDict_Check(json_serializer)) {
       PyObject *type_obj = reinterpret_cast<PyObject *>(Py_TYPE(value));
-      PyObject *conv_func = PyDict_GetItem(json_serializer, type_obj);
-      if (conv_func && PyCallable_Check(conv_func)) {
-        PyObject *converted =
-            PyObject_CallFunctionObjArgs(conv_func, value, nullptr);
-        if (converted) {
-          bool success = write_json_value(converted, json_serializer, writer);
-          Py_DECREF(converted);
-          return success;
+      PyObject *conv_func = find_custom_serializer(type_obj, json_serializer);
+      if (conv_func) {
+        if (PyCallable_Check(conv_func)) {
+          PyObject *converted =
+              PyObject_CallFunctionObjArgs(conv_func, value, nullptr);
+          if (converted) {
+            bool success = write_json_value(converted, json_serializer, writer);
+            Py_DECREF(converted);
+            Py_DECREF(conv_func);
+            return success;
+          }
         }
+        Py_DECREF(conv_func);
       }
     }
     if (PyBool_Check(value)) {

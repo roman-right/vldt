@@ -187,6 +187,29 @@ class TestToJsonFromJson:
         expected = {"value": "3.14"}
         assert d == expected
 
+    def test_custom_serializer_mro_fallback(self):
+        """Test that serializer mappings apply to subclasses through MRO fallback."""
+
+        class Base:
+            pass
+
+        class Derived(Base):
+            pass
+
+        def base_serializer(v: Base) -> str:
+            return "base"
+
+        class SerializerModel(DataModel):
+            value: Base
+            __vldt_config__ = Config(
+                dict_serializer={Base: base_serializer},
+                json_serializer={Base: base_serializer},
+            )
+
+        model = SerializerModel(value=Derived())
+        assert model.to_dict() == {"value": "base"}
+        assert json.loads(model.to_json()) == {"value": "base"}
+
     def test_missing_fields(self):
         """Test that a validation error is raised when required fields are missing."""
         data = {

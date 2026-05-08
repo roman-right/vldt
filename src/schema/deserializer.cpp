@@ -66,6 +66,24 @@ PyObject *get_deserializer(Deserializers *deserializers,
     Py_INCREF(it->second);
     return it->second;
   }
+
+  if (PyType_Check(deserialize_from)) {
+    PyTypeObject *type_ptr = reinterpret_cast<PyTypeObject *>(deserialize_from);
+    PyObject *mro = type_ptr->tp_mro;
+    if (mro && PyTuple_Check(mro)) {
+      Py_ssize_t len = PyTuple_GET_SIZE(mro);
+      for (Py_ssize_t i = 1; i < len; ++i) {
+        PyObject *base = PyTuple_GET_ITEM(mro, i);
+        DeserializerKey fallback_dk = {deserialize_to, base};
+        auto fallback_it = deserializers->map.find(fallback_dk);
+        if (fallback_it != deserializers->map.end()) {
+          Py_INCREF(fallback_it->second);
+          return fallback_it->second;
+        }
+      }
+    }
+  }
+
   Py_RETURN_NONE;
 }
 

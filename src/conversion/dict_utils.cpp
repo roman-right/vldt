@@ -65,19 +65,54 @@ bool validate_dict_keys_are_unicode(PyObject *dict_obj) {
  * @return New reference to the converted PyObject, or nullptr if no conversion
  * is performed.
  */
+PyObject *find_custom_serializer(PyObject *type_obj,
+                                     PyObject *serializer_dict) {
+  if (!serializer_dict || !PyDict_Check(serializer_dict) ||
+      PyDict_Size(serializer_dict) == 0 || !type_obj) {
+    return nullptr;
+  }
+
+  PyObject *conv_func = PyDict_GetItem(serializer_dict, type_obj);
+  if (conv_func) {
+    Py_INCREF(conv_func);
+    return conv_func;
+  }
+
+  if (PyType_Check(type_obj)) {
+    PyTypeObject *type_ptr = reinterpret_cast<PyTypeObject *>(type_obj);
+    PyObject *mro = type_ptr->tp_mro;
+    if (mro && PyTuple_Check(mro)) {
+      Py_ssize_t len = PyTuple_GET_SIZE(mro);
+      for (Py_ssize_t i = 1; i < len; ++i) {
+        PyObject *base = PyTuple_GET_ITEM(mro, i);
+        conv_func = PyDict_GetItem(serializer_dict, base);
+        if (conv_func) {
+          Py_INCREF(conv_func);
+          return conv_func;
+        }
+      }
+    }
+  }
+  return nullptr;
+}
+
 static PyObject *apply_dict_serializer(PyObject *value,
                                        PyObject *dict_serializer) {
   if (dict_serializer && PyDict_Check(dict_serializer) &&
       PyDict_Size(dict_serializer) > 0) {
     PyObject *type_obj = (PyObject *)Py_TYPE(value);
-    PyObject *conv_func = PyDict_GetItem(dict_serializer, type_obj);
-    if (conv_func && PyCallable_Check(conv_func)) {
-      PyObject *converted =
-          PyObject_CallFunctionObjArgs(conv_func, value, nullptr);
-      if (converted && converted != Py_NotImplemented) {
-        return converted;
+    PyObject *conv_func = find_custom_serializer(type_obj, dict_serializer);
+    if (conv_func) {
+      if (PyCallable_Check(conv_func)) {
+        PyObject *converted =
+            PyObject_CallFunctionObjArgs(conv_func, value, nullptr);
+        if (converted && converted != Py_NotImplemented) {
+          Py_DECREF(conv_func);
+          return converted;
+        }
+        Py_XDECREF(converted);
       }
-      Py_XDECREF(converted);
+      Py_DECREF(conv_func);
     }
   }
   return nullptr;

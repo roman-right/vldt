@@ -81,3 +81,22 @@ class TestDeserializer:
         assert obj.height == 1.75
         assert obj.is_active is True
         assert obj.created_at == datetime(2021, 1, 1, 12, 0)
+
+    def test_deserializer_mro_fallback(self):
+        """Test that deserializer mappings fallback to base classes in the MRO."""
+
+        class MyStr(str):
+            pass
+
+        data = {
+            "id": "123e4567-e89b-12d3-a456-426614174000",
+            "name": "Alice",
+            "age": 30,
+            "height": 1.75,
+            "is_active": True,
+            "created_at": MyStr("2021/01/01 12:00:00"),
+        }
+
+        obj = ModelWithManyTypes.from_dict(data)
+        assert obj.id == UUID("123e4567-e89b-12d3-a456-426614174000")
+        assert obj.created_at == datetime(2021, 1, 1, 12, 0)

@@ -24,6 +24,8 @@ PyObject *dict_utils_to_dict(PyObject *self, PyObject *unused);
  */
 PyObject *dict_utils_from_dict(PyObject *cls, PyObject *args);
 
+PyObject *find_custom_serializer(PyObject *type_obj, PyObject *serializer_dict);
+
 /**
  * @brief Validate that all keys in a dictionary are Unicode strings.
  *
