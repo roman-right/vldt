@@ -10,7 +10,6 @@
 #include "validation_validators.hpp"
 
 #include <Python.h>
-#include <array>
 #include <cstdio>
 #include <cstring>
 #include <rapidjson/document.h>
@@ -52,14 +51,12 @@ static inline PyObject *primitive_leaf_from_json(const rapidjson::Value &val,
 /**
  * @brief Build the per-element error path "{base}.{index}" lazily.
  */
-static void build_indexed_path(char *buf, size_t buf_size, const char *base,
-                               size_t base_len, rapidjson::SizeType i) {
-  if (base_len >= buf_size - 2) {
-    base_len = buf_size - 2;
-  }
-  std::memcpy(buf, base, base_len);
-  buf[base_len] = '.';
-  std::snprintf(buf + base_len + 1, buf_size - base_len - 1, "%u", i);
+static std::string build_indexed_path(const char *base, size_t base_len,
+                                      rapidjson::SizeType i) {
+  std::string result(base, base_len);
+  result += '.';
+  result += std::to_string(i);
+  return result;
 }
 
 /**
@@ -99,11 +96,9 @@ static PyObject *validate_list_from_json(const rapidjson::Value &val,
       if (!item) {
         // Coercion or null: fall back to the full path with a real error
         // path so any error message points at the right element.
-        std::array<char, 256> new_path;
-        build_indexed_path(new_path.data(), new_path.size(), error_path,
-                           base_len, i);
+        std::string new_path = build_indexed_path(error_path, base_len, i);
         item = validate_and_convert_from_json(v, inner, collector,
-                                              new_path.data(), deserializers);
+                                              new_path.c_str(), deserializers);
         if (!item) {
           Py_DECREF(new_list);
           return nullptr;
@@ -115,12 +110,10 @@ static PyObject *validate_list_from_json(const rapidjson::Value &val,
   }
 
   // Generic path: full dispatch per element.
-  std::array<char, 256> new_path;
   for (rapidjson::SizeType i = 0; i < size; i++) {
-    build_indexed_path(new_path.data(), new_path.size(), error_path, base_len,
-                       i);
+    std::string new_path = build_indexed_path(error_path, base_len, i);
     PyObject *item = validate_and_convert_from_json(
-        val[i], inner, collector, new_path.data(), deserializers);
+        val[i], inner, collector, new_path.c_str(), deserializers);
     if (!item) {
       Py_DECREF(new_list);
       return nullptr;
@@ -160,7 +153,6 @@ static PyObject *validate_dict_from_json(const rapidjson::Value &val,
   bool val_is_primitive = (val_schema->primitive_kind != PK_NONE);
 
   size_t base_len = std::strlen(error_path);
-  std::array<char, 256> new_path;
 
   for (auto itr = val.MemberBegin(); itr != val.MemberEnd(); ++itr) {
     const char *key_str = itr->name.GetString();
@@ -176,15 +168,9 @@ static PyObject *validate_dict_from_json(const rapidjson::Value &val,
       conv_key = py_key;
     } else {
       // Build error path lazily for the key validation.
-      if (base_len >= new_path.size() - 2) {
-        base_len = new_path.size() - 2;
-      }
-      std::memcpy(new_path.data(), error_path, base_len);
-      new_path[base_len] = '.';
-      std::snprintf(new_path.data() + base_len + 1,
-                    new_path.size() - base_len - 1, "%s", key_str);
+      std::string new_path = std::string(error_path, base_len) + "." + key_str;
       conv_key = validate_and_convert(py_key, key_schema, collector,
-                                      new_path.data(), deserializers);
+                                      new_path.c_str(), deserializers);
       Py_DECREF(py_key);
       if (!conv_key) {
         Py_DECREF(new_dict);
@@ -198,15 +184,9 @@ static PyObject *validate_dict_from_json(const rapidjson::Value &val,
     }
     if (!conv_val) {
       // Slow path or coercion: build the error path.
-      if (base_len >= new_path.size() - 2) {
-        base_len = new_path.size() - 2;
-      }
-      std::memcpy(new_path.data(), error_path, base_len);
-      new_path[base_len] = '.';
-      std::snprintf(new_path.data() + base_len + 1,
-                    new_path.size() - base_len - 1, "%s", key_str);
+      std::string new_path = std::string(error_path, base_len) + "." + key_str;
       conv_val = validate_and_convert_from_json(
-          itr->value, val_schema, collector, new_path.data(), deserializers);
+          itr->value, val_schema, collector, new_path.c_str(), deserializers);
       if (!conv_val) {
         Py_DECREF(conv_key);
         Py_DECREF(new_dict);
@@ -248,17 +228,15 @@ static PyObject *validate_tuple_from_json(const rapidjson::Value &val,
     }
     TypeSchema *inner = ts->args[0];
     size_t base_len = std::strlen(error_path);
-    std::array<char, 256> new_path;
     for (rapidjson::SizeType i = 0; i < size; i++) {
       PyObject *conv = nullptr;
       if (inner->primitive_kind != PK_NONE) {
         conv = primitive_leaf_from_json(val[i], inner);
       }
       if (!conv) {
-        build_indexed_path(new_path.data(), new_path.size(), error_path,
-                           base_len, i);
+        std::string new_path = build_indexed_path(error_path, base_len, i);
         conv = validate_and_convert_from_json(val[i], inner, collector,
-                                              new_path.data(), deserializers);
+                                              new_path.c_str(), deserializers);
         if (!conv) {
           Py_DECREF(new_tuple);
           return nullptr;
@@ -270,10 +248,8 @@ static PyObject *validate_tuple_from_json(const rapidjson::Value &val,
   }
   if (ts->num_args != static_cast<Py_ssize_t>(size)) {
     if (collector) {
-      std::array<char, 128> buf;
-      std::snprintf(buf.data(), buf.size(),
-                    "Expected tuple of length %zd, got %u", ts->num_args, size);
-      collector->add_error(error_path, buf.data());
+      std::string msg = "Expected tuple of length " + std::to_string(ts->num_args) + ", got " + std::to_string(size);
+      collector->add_error(error_path, msg);
     }
     return nullptr;
   }
@@ -282,7 +258,6 @@ static PyObject *validate_tuple_from_json(const rapidjson::Value &val,
     return nullptr;
   }
   size_t base_len = std::strlen(error_path);
-  std::array<char, 256> new_path;
   for (rapidjson::SizeType i = 0; i < size; i++) {
     TypeSchema *inner = ts->args[i];
     PyObject *conv = nullptr;
@@ -290,10 +265,9 @@ static PyObject *validate_tuple_from_json(const rapidjson::Value &val,
       conv = primitive_leaf_from_json(val[i], inner);
     }
     if (!conv) {
-      build_indexed_path(new_path.data(), new_path.size(), error_path,
-                         base_len, i);
+      std::string new_path = build_indexed_path(error_path, base_len, i);
       conv = validate_and_convert_from_json(val[i], inner, collector,
-                                            new_path.data(), deserializers);
+                                            new_path.c_str(), deserializers);
       if (!conv) {
         Py_DECREF(new_tuple);
         return nullptr;
@@ -324,17 +298,15 @@ static PyObject *validate_set_from_json(const rapidjson::Value &val,
   }
   TypeSchema *inner = ts->args[0];
   size_t base_len = std::strlen(error_path);
-  std::array<char, 256> new_path;
   for (rapidjson::SizeType i = 0; i < val.Size(); i++) {
     PyObject *conv = nullptr;
     if (inner->primitive_kind != PK_NONE) {
       conv = primitive_leaf_from_json(val[i], inner);
     }
     if (!conv) {
-      build_indexed_path(new_path.data(), new_path.size(), error_path,
-                         base_len, i);
+      std::string new_path = build_indexed_path(error_path, base_len, i);
       conv = validate_and_convert_from_json(val[i], inner, collector,
-                                            new_path.data(), deserializers);
+                                            new_path.c_str(), deserializers);
       if (!conv) {
         Py_DECREF(new_set);
         return nullptr;

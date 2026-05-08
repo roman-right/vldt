@@ -7,7 +7,6 @@
 #include "validation.hpp"
 #include "validation_primitives.hpp"
 #include <Python.h>
-#include <array>
 #include <stdio.h>
 #include <string>
 
@@ -40,21 +39,13 @@ PyObject *validate_list(PyObject *value, TypeSchema *ts,
     return nullptr;
   }
 
-  size_t base_len = strlen(error_path);
-  std::array<char, 256> new_path;
-  if (base_len >= new_path.size() - 2) {
-    base_len = new_path.size() - 2;
-  }
-  memcpy(new_path.data(), error_path, base_len);
-  new_path[base_len] = '.';
-  new_path[base_len + 1] = '\0';
+  std::string new_path = std::string(error_path) + ".";
 
   for (Py_ssize_t i = 0; i < size; i++) {
     PyObject *item = PyList_GetItem(value, i);
-    snprintf(new_path.data() + base_len + 1, new_path.size() - base_len - 1,
-             "%zd", i);
+    std::string elem_path = new_path + std::to_string(i);
     PyObject *conv_item = validate_and_convert(item, ts->args[0], collector,
-                                               new_path.data(), deserializers);
+                                               elem_path.c_str(), deserializers);
     if (!conv_item) {
       Py_DECREF(new_list);
       return nullptr;
@@ -96,30 +87,22 @@ PyObject *validate_dict(PyObject *value, TypeSchema *ts,
   TypeSchema *key_schema = ts->args[0];
   TypeSchema *val_schema = ts->args[1];
 
-  size_t base_len = strlen(error_path);
-  std::array<char, 256> new_path;
-  if (base_len >= new_path.size() - 2) {
-    base_len = new_path.size() - 2;
-  }
-  memcpy(new_path.data(), error_path, base_len);
-  new_path[base_len] = '.';
-  new_path[base_len + 1] = '\0';
+  std::string base_path = std::string(error_path) + ".";
 
   PyObject *key, *val;
   Py_ssize_t pos = 0;
   while (PyDict_Next(value, &pos, &key, &val)) {
     const char *key_str =
         PyUnicode_Check(key) ? PyUnicode_AsUTF8(key) : safe_type_name(key);
-    snprintf(new_path.data() + base_len + 1, new_path.size() - base_len - 1,
-             "%s", key_str);
+    std::string elem_path = base_path + key_str;
     PyObject *conv_key = validate_and_convert(key, key_schema, collector,
-                                              new_path.data(), deserializers);
+                                              elem_path.c_str(), deserializers);
     if (!conv_key) {
       Py_DECREF(new_dict);
       return nullptr;
     }
     PyObject *conv_val = validate_and_convert(val, val_schema, collector,
-                                              new_path.data(), deserializers);
+                                              elem_path.c_str(), deserializers);
     if (!conv_val) {
       Py_DECREF(conv_key);
       Py_DECREF(new_dict);
@@ -170,10 +153,9 @@ PyObject *validate_tuple(PyObject *value, TypeSchema *ts,
     TypeSchema *element_ts = ts->args[0];
     for (Py_ssize_t i = 0; i < size; i++) {
       PyObject *item = PyTuple_GetItem(value, i);
-      std::array<char, 256> new_path;
-      snprintf(new_path.data(), new_path.size(), "%s.%zd", error_path, i);
+      std::string new_path = std::string(error_path) + "." + std::to_string(i);
       PyObject *conv_item = validate_and_convert(
-          item, element_ts, collector, new_path.data(), deserializers);
+          item, element_ts, collector, new_path.c_str(), deserializers);
       if (!conv_item) {
         Py_DECREF(new_tuple);
         return nullptr;
@@ -184,10 +166,8 @@ PyObject *validate_tuple(PyObject *value, TypeSchema *ts,
   }
   if (ts->num_args != size) {
     if (collector) {
-      std::array<char, 128> buf;
-      snprintf(buf.data(), buf.size(), "Expected tuple of length %zd, got %zd",
-               ts->num_args, size);
-      collector->add_error(error_path, buf.data());
+      std::string msg = "Expected tuple of length " + std::to_string(ts->num_args) + ", got " + std::to_string(size);
+      collector->add_error(error_path, msg);
     }
     return nullptr;
   }
@@ -197,10 +177,9 @@ PyObject *validate_tuple(PyObject *value, TypeSchema *ts,
   }
   for (Py_ssize_t i = 0; i < size; i++) {
     PyObject *item = PyTuple_GetItem(value, i);
-    std::array<char, 256> new_path;
-    snprintf(new_path.data(), new_path.size(), "%s.%zd", error_path, i);
+    std::string new_path = std::string(error_path) + "." + std::to_string(i);
     PyObject *conv_item = validate_and_convert(item, ts->args[i], collector,
-                                               new_path.data(), deserializers);
+                                               new_path.c_str(), deserializers);
     if (!conv_item) {
       Py_DECREF(new_tuple);
       return nullptr;
@@ -245,10 +224,9 @@ PyObject *validate_set(PyObject *value, TypeSchema *ts,
   PyObject *item;
   Py_ssize_t idx = 0;
   while ((item = PyIter_Next(iterator)) != nullptr) {
-    std::array<char, 256> new_path;
-    snprintf(new_path.data(), new_path.size(), "%s.%zd", error_path, idx++);
+    std::string new_path = std::string(error_path) + "." + std::to_string(idx++);
     PyObject *conv_item = validate_and_convert(item, ts->args[0], collector,
-                                               new_path.data(), deserializers);
+                                                new_path.c_str(), deserializers);
     Py_DECREF(item);
     if (!conv_item) {
       Py_DECREF(iterator);
