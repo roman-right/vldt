@@ -347,9 +347,13 @@ int DataModel_init(PyObject *self, PyObject *args, PyObject *kwds) {
 /**
  * @brief DataModel.__setattro__ implementation.
  *
+ * Handles attribute setting and deletion (value == nullptr).
+ * For declared fields, deletion resets the field to nullptr (which will
+ * be treated as unset). For extra fields, deletion removes the entry.
+ *
  * @param self Python object.
  * @param name Attribute name.
- * @param value Attribute value.
+ * @param value Attribute value, or nullptr for deletion.
  * @return int 0 on success, -1 on failure.
  */
 int DataModel_setattro(PyObject *self, PyObject *name, PyObject *value) {
@@ -410,6 +414,26 @@ int DataModel_setattro(PyObject *self, PyObject *name, PyObject *value) {
     if (!ts) {
       return -1;
     }
+  }
+
+  // Handle attribute deletion (value == nullptr).
+  if (!value) {
+    if (it != schema->name_index.end()) {
+      // Declared field: reset to nullptr (unset).
+      Py_XDECREF(data->fields[idx]);
+      data->fields[idx] = nullptr;
+      return 0;
+    }
+    if (data->extra_fields) {
+      auto exi = data->extra_fields->find(name_view);
+      if (exi != data->extra_fields->end()) {
+        Py_XDECREF(exi->second);
+        data->extra_fields->erase(exi);
+        return 0;
+      }
+    }
+    // Not found: let Python raise AttributeError.
+    return PyObject_GenericSetAttr(self, name, value);
   }
 
   if (ts) {
