@@ -4,24 +4,17 @@
 /**
  * @brief Returns a new reference to a callable validator.
  *
- * If the provided validator is callable, it returns it (with an extra
- * reference); otherwise, if it has a "__func__" attribute that is callable, it
- * returns that. Returns nullptr if neither is callable.
+ * Validators are already resolved to raw callables at schema compile time
+ * (in DataModelMeta.__init__), so this simply checks callability and
+ * returns an incref'd reference. Returns nullptr if not callable.
  *
- * @param validator The original validator object.
+ * @param validator The validator object (should already be a callable).
  * @return New reference to a callable validator, or nullptr.
  */
 static PyObject *get_callable_validator(PyObject *validator) {
   if (PyCallable_Check(validator)) {
     Py_INCREF(validator);
     return validator;
-  }
-  if (PyObject_HasAttrString(validator, "__func__")) {
-    PyObject *func = PyObject_GetAttrString(validator, "__func__");
-    if (func && PyCallable_Check(func)) {
-      return func;
-    }
-    Py_XDECREF(func);
   }
   return nullptr;
 }
