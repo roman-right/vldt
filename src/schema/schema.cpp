@@ -19,6 +19,9 @@ extern PyObject *FieldUndefined;
 namespace {
 PyObject *cached_type_schema_key = nullptr;
 PyObject *unified_schema_key = nullptr;
+// Global cache for TypeSchema objects keyed by object pointer (id).
+// This allows caching for non-type objects like List[int], Dict[str, int], etc.
+PyObject *global_type_schema_cache = nullptr;
 
 /**
  * @brief No-op capsule destructor.
@@ -52,6 +55,7 @@ PyObject *get_type_annotations(PyObject *cls) {
  * @return Pointer to cached TypeSchema or nullptr.
  */
 TypeSchema *get_cached_type_schema(PyObject *expected_type) {
+  // For actual Python types, cache on the type's tp_dict.
   if (PyType_Check(expected_type)) {
     auto type_dict = reinterpret_cast<PyTypeObject *>(expected_type)->tp_dict;
     if (type_dict && PyDict_Check(type_dict)) {
@@ -60,6 +64,23 @@ TypeSchema *get_cached_type_schema(PyObject *expected_type) {
             PyUnicode_InternFromString("__vldt_type_schema__");
       }
       PyObject *capsule = PyDict_GetItem(type_dict, cached_type_schema_key);
+      if (capsule) {
+        auto cached_ts = static_cast<TypeSchema *>(
+            PyCapsule_GetPointer(capsule, "vldt.TypeSchema"));
+        if (cached_ts) {
+          return cached_ts;
+        }
+      }
+    }
+  }
+  // For non-type objects (e.g. List[int], Dict[str, int]), use a global
+  // cache keyed by object pointer. Python caches GenericAlias objects, so
+  // the same List[int] object is reused across multiple field declarations.
+  if (global_type_schema_cache) {
+    PyObject *id_key = PyLong_FromVoidPtr(expected_type);
+    if (id_key) {
+      PyObject *capsule = PyDict_GetItem(global_type_schema_cache, id_key);
+      Py_DECREF(id_key);
       if (capsule) {
         auto cached_ts = static_cast<TypeSchema *>(
             PyCapsule_GetPointer(capsule, "vldt.TypeSchema"));
@@ -93,6 +114,26 @@ void try_cache_type_schema(PyObject *expected_type, TypeSchema *ts) {
         ts->cached = 1;
       }
     }
+  } else {
+    // Cache non-type objects (e.g. List[int]) in the global cache.
+    if (!global_type_schema_cache) {
+      global_type_schema_cache = PyDict_New();
+      if (!global_type_schema_cache) {
+        return;
+      }
+    }
+    PyObject *id_key = PyLong_FromVoidPtr(expected_type);
+    if (!id_key) {
+      return;
+    }
+    PyObject *capsule =
+        PyCapsule_New(ts, "vldt.TypeSchema", no_op_capsule_destructor);
+    if (capsule) {
+      PyDict_SetItem(global_type_schema_cache, id_key, capsule);
+      Py_DECREF(capsule);
+      ts->cached = 1;
+    }
+    Py_DECREF(id_key);
   }
 }
 
