@@ -1,3 +1,5 @@
+import importlib.metadata
+
 from vldt.config import Config
 from vldt.fields import Field
 from vldt.models import DataModel, AsyncDataModel
@@ -9,6 +11,11 @@ from vldt.validators import (
     async_model_validator,
 )
 
+try:
+    __version__ = importlib.metadata.version("vldt")
+except importlib.metadata.PackageNotFoundError:
+    __version__ = "0.0.0"
+
 __all__ = [
     "AsyncDataModel",
     "DataModel",
@@ -19,4 +26,5 @@ __all__ = [
     "model_validator",
     "Field",
     "Config",
+    "__version__",
 ]

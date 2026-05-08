@@ -177,7 +177,6 @@ using ExtraFieldsMap =
 struct InstanceData {
   std::vector<PyObject *> fields;
   std::unique_ptr<ExtraFieldsMap> extra_fields;
-  bool dict_initialized;
   void *cached_schema;
 };
 

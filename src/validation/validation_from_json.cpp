@@ -729,7 +729,6 @@ PyObject *data_model_from_json(PyObject *cls,
   }
   self->instance_data = new InstanceData();
   self->instance_data->cached_schema = static_cast<void *>(schema);
-  self->instance_data->dict_initialized = false;
   self->instance_data->fields.assign(schema->num_fields, nullptr);
 
   ErrorCollector collector;

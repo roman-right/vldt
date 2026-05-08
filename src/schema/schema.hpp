@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "schema/deserializer.hpp" // Include the deserializers header
 #include <Python.h>
@@ -90,7 +90,7 @@ enum PrimitiveKind {
  *  - The number of type arguments (from __args__).
  *  - An array of pointers to the TypeSchema for each type argument.
  *  - A cached representation of the type (for error messages).
- *  - The cached UTF-8 representation of the type’s repr.
+ *  - The cached UTF-8 representation of the typeâ€™s repr.
  *  - Flags for model and optional types.
  *  - Container information: container_kind and, if applicable,
  *    inner_model_type.
@@ -158,7 +158,6 @@ struct SchemaCache {
   PyObject *json_serializer;
   PyObject *instance_annotations;
   PyObject *validators;
-  PyObject *cached_to_dict;
   int has_field_before;
   int has_field_after;
   int has_model_before;

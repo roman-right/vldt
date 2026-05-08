@@ -727,7 +727,6 @@ PyObject *compile_schema(PyObject *cls) {
   }
 
   compile_validators(cls, schema);
-  schema->cached_to_dict = PyObject_GetAttrString(cls, "to_dict");
 
   // Populate the name -> field-index map (canonical names + any aliases).
   // First-writer wins, matching the order: aliases listed earlier on the
@@ -784,7 +783,6 @@ PyObject *compile_schema(PyObject *cls) {
           Py_DECREF(schema->json_serializer);
           Py_DECREF(schema->instance_annotations);
           Py_DECREF(schema->validators);
-          Py_DECREF(schema->cached_to_dict);
           if (schema->deserializers) {
             free_deserializers(schema->deserializers);
           }

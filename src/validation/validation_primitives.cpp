@@ -1,6 +1,7 @@
 #include "validation_primitives.hpp"
 #include "error_handling.hpp"
 #include "init_globals.hpp"
+#include "safe_type_name.hpp"
 
 #include <Python.h>
 #include <array>
@@ -11,42 +12,6 @@
 // extern PyObject *StrType;
 // extern PyObject *FloatType;
 // extern PyObject *BoolType;
-
-/**
- * @brief Returns a safe type name for a Python object.
- *
- * This function attempts to retrieve the __name__ or __qualname__ attribute of
- * a Python object if it is a type. Otherwise, it returns the type name or
- * "<unknown>".
- *
- * @param obj The Python object.
- * @return The safe type name as a C-string.
- */
-static const char *safe_type_name(PyObject *obj) {
-  if (!obj) {
-    return "<unknown>";
-  }
-  if (PyType_Check(obj)) {
-    PyObject *name_obj = PyObject_GetAttrString(obj, "__name__");
-    if (!name_obj) {
-      PyErr_Clear();
-      name_obj = PyObject_GetAttrString(obj, "__qualname__");
-    }
-    if (name_obj) {
-      const char *name = PyUnicode_AsUTF8(name_obj);
-      Py_DECREF(name_obj);
-      if (name) {
-        return name;
-      }
-    }
-    return ((PyTypeObject *)obj)->tp_name;
-  }
-  PyTypeObject *type = Py_TYPE(obj);
-  if (!type || !type->tp_name) {
-    return "<unknown>";
-  }
-  return type->tp_name;
-}
 
 /**
  * @brief Validates and converts a Python object to an integer.

@@ -106,7 +106,6 @@ PyObject *DataModel_new(PyTypeObject *type, PyObject *args, PyObject *kwds) {
   if (self) {
     self->instance_data = new InstanceData();
     self->instance_data->cached_schema = nullptr;
-    self->instance_data->dict_initialized = false;
   }
   return (PyObject *)self;
 }
@@ -502,7 +501,6 @@ static PyObject *DataModel_copy(PyObject *self, PyObject *Py_UNUSED(ignored)) {
   SchemaCache *schema =
       static_cast<SchemaCache *>(src->instance_data->cached_schema);
   dst->instance_data->cached_schema = schema;
-  dst->instance_data->dict_initialized = false;
 
   ErrorCollector collector;
   Py_ssize_t n_src = static_cast<Py_ssize_t>(src->instance_data->fields.size());
@@ -567,7 +565,6 @@ static PyObject *DataModel_deepcopy(PyObject *self, PyObject *args) {
   SchemaCache *schema =
       static_cast<SchemaCache *>(src->instance_data->cached_schema);
   dst->instance_data->cached_schema = schema;
-  dst->instance_data->dict_initialized = false;
 
   // Each field is deep-copied via copy.deepcopy and then re-validated
   // against its schema. This catches type-invariant violations introduced
@@ -620,6 +617,12 @@ static PyObject *DataModel_deepcopy(PyObject *self, PyObject *args) {
   return new_obj;
 }
 
+static PyObject *DataModel_repr(PyObject *self) {
+  PyObject *cls = (PyObject *)Py_TYPE(self);
+  const char *name = ((PyTypeObject *)cls)->tp_name;
+  return PyUnicode_FromFormat("<%s object at %p>", name, (void *)self);
+}
+
 static PyMethodDef DataModel_methods[] = {
     {"from_dict", (PyCFunction)dict_utils_from_dict, METH_CLASS | METH_VARARGS,
      "Create an instance from a dictionary."},
@@ -633,6 +636,8 @@ static PyMethodDef DataModel_methods[] = {
      "Shallow copy the model instance."},
     {"__deepcopy__", (PyCFunction)DataModel_deepcopy, METH_VARARGS,
      "Deep copy the model instance."},
+    {"__repr__", (PyCFunction)DataModel_repr, METH_NOARGS,
+     "Return a string representation of the model instance."},
     {nullptr, nullptr, 0, nullptr}};
 
 PyTypeObject DataModelType = {
@@ -646,7 +651,7 @@ PyTypeObject DataModelType = {
     .tp_getattr = nullptr,
     .tp_setattr = nullptr,
     .tp_as_async = nullptr,
-    .tp_repr = nullptr,
+    .tp_repr = DataModel_repr,
     .tp_as_number = nullptr,
     .tp_as_sequence = nullptr,
     .tp_as_mapping = nullptr,

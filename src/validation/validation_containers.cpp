@@ -1,6 +1,7 @@
 #include "validation_containers.hpp"
 #include "error_handling.hpp"
 #include "init_globals.hpp"
+#include "safe_type_name.hpp"
 #include "schema/deserializer.hpp"
 #include "schema/schema.hpp"
 #include "validation.hpp"
@@ -9,41 +10,6 @@
 #include <array>
 #include <stdio.h>
 #include <string>
-
-/**
- * @brief Returns a safe type name for a Python object.
- *
- * If the object is a type, returns its __name__ or __qualname__ attribute.
- * Otherwise, returns the type's name or "<unknown>" if unavailable.
- *
- * @param obj The Python object.
- * @return A C-string representing the safe type name.
- */
-static const char *safe_type_name(PyObject *obj) {
-  if (!obj) {
-    return "<unknown>";
-  }
-  if (PyType_Check(obj)) {
-    PyObject *name_obj = PyObject_GetAttrString(obj, "__name__");
-    if (!name_obj) {
-      PyErr_Clear();
-      name_obj = PyObject_GetAttrString(obj, "__qualname__");
-    }
-    if (name_obj) {
-      const char *name = PyUnicode_AsUTF8(name_obj);
-      Py_DECREF(name_obj);
-      if (name) {
-        return name;
-      }
-    }
-    return ((PyTypeObject *)obj)->tp_name;
-  }
-  PyTypeObject *type = Py_TYPE(obj);
-  if (!type || !type->tp_name) {
-    return "<unknown>";
-  }
-  return type->tp_name;
-}
 
 /**
  * @brief Validates and converts a Python list.
