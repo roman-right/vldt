@@ -38,7 +38,7 @@ construction are 30 to 70 percent faster.
 
 The benchmark script is in `load_test/load_test.py`.
 
-![Performance Chart](assets/performance_chart.png)
+![Performance Chart](https://raw.githubusercontent.com/roman-right/vldt/main/assets/performance_chart.png)
 
 ## Installation
 
